@@ -16,6 +16,9 @@ bin/
 b2d-server
 b2d-etl
 
+# gitnexus local index (derived, 12MB+)
+.gitnexus/
+
 # OS
 .DS_Store
 
