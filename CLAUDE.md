@@ -1,3 +1,27 @@
+# b2d_geo 프로젝트 지침
+
+이 저장소의 최상위 지시서는 `b2d_geo_claude_code_prompt.md`다. **세션 시작 시
+반드시 정독할 것.** 절대 규칙(데이터 출처 화이트리스트, git author, 생성/검증
+분리, caveman 운용, 단순성 원칙)이 모두 거기에 있다.
+
+## 작업 재개 방법
+
+1. `tasks/todo.md`에서 미완료(`[ ]`) 첫 항목부터 이어서 진행한다.
+   전체 계획은 이미 사용자 승인을 받았다 (Phase 단위 재승인 불필요,
+   단 각 Phase 완료 시 고수준 요약 보고는 필수).
+2. 직전까지의 맥락은 `learning_log.md`가 담고 있다 (Phase별 상세 기록).
+3. 서브에이전트 통신/커밋 메시지는 caveman 모드 (`/caveman`), learning_log
+   작성과 사용자 보고는 일반 모드.
+4. 개발 DB: `make up` (PostGIS, 호스트 포트 5433 — 5432는 로컬 Homebrew
+   postgres가 점유 중). 마이그레이션: `make migrate`.
+
+## 현재 상태 요약 (수동 갱신)
+
+- Phase 0 (골격) 완료: 스키마, 마이그레이션 러너, compose, CI, 에이전트 정의.
+- 다음 작업: Phase 1 ETL — juso.go.kr 파일 명세서 실물 확보와 원본 좌표계
+  확정이 첫 항목. 전체분 다운로드에 juso.go.kr 신청이 필요하면 사용자에게
+  브라우저 작업을 요청할 것.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
