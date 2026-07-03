@@ -96,6 +96,10 @@ postgis/postgis:16-3.4 공식 이미지는 amd64만 제공한다. Apple Silicon�
 것으로 보이나 `which caveman`, Claude 플러그인 목록 모두에서 찾지 못했다.
 도구 없이도 서브에이전트 보고를 "짧은 문장, 결과 중심"으로 강제하는 방식으로
 취지(토큰 절약)는 지키되, 도구 설치가 필요하면 사용자 확인이 필요하다.
+(해결: 사용자가 알려준 https://github.com/juliusbrussee/caveman 로 설치 완료.
+Claude Code 스킬 7종이 ~/.claude/skills에 전역 설치되었고, 세션에서 /caveman
+또는 "caveman mode"로 활성화한다. 설치 스크립트는 실행 전에 내려받아 내용을
+검토했다 — 원격 스크립트 파이프 실행을 피하는 습관.)
 
 ### 이 작업에서 배울 수 있는 핵심 개념
 

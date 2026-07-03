@@ -19,6 +19,10 @@ b2d-etl
 # gitnexus local index (derived, 12MB+)
 .gitnexus/
 
+# caveman installer artifacts (skill lives in ~/.claude/skills)
+.aider-desk/
+skills-lock.json
+
 # OS
 .DS_Store
 
