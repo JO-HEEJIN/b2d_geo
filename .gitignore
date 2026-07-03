@@ -1,0 +1,24 @@
+# secrets
+.env
+*.env
+
+# data files (public data downloads, not tracked)
+data/
+*.zip
+*.csv
+*.shp
+*.shx
+*.dbf
+*.prj
+
+# build artifacts
+bin/
+b2d-server
+b2d-etl
+
+# OS
+.DS_Store
+
+# editor
+.idea/
+.vscode/
