@@ -27,11 +27,16 @@
 
 ## Phase 1 — ETL (b2d-data 주도)
 
-- [ ] 1-1. juso.go.kr 파일 명세서 실물 확보 -> 컬럼 정의를 코드 상수로 문서화,
+- [>] 1-1. (거의 완료) juso.go.kr 파일 명세서 실물 확보 -> 컬럼 정의를 코드 상수로 문서화,
       원본 좌표계(EPSG) 확정 (docs 미검증 항목 SDP R-04, TC-I03 해소)
-- [ ] 1-2. 도로명주소 한글 DB + 위치정보 DB 다운로드/파싱 (EUC-KR -> UTF-8,
-      golang.org/x/text 사용, `|` 구분자) -> 검증: 샘플 행 파싱 결과 육안 대조
-- [ ] 1-3. 상가(상권)정보 CSV(15083033) 적재 -> 검증: 명세로 WGS84 여부 재확인
+      - 공개분(한글DB/건물DB/주소DB) 레이아웃 verbatim 확보: docs/dataspec/juso.md
+      - 위치정보요약DB/내비게이션용DB 레이아웃+EPSG 확정은 연계신청 승인 대기
+        (2026-07-03 사용자 신청 진행, 승인기관 행안부). ITRF2000/GRS80까지만 확인
+- [>] 1-2. (in progress, juso-spec) 도로명주소 한글 DB 다운로드/파싱 (MS949 -> UTF-8,
+      golang.org/x/text 사용, `|` 구분자) -> 검증: 샘플 행 파싱 결과 육안 대조.
+      위치정보 DB 부분은 승인 후 진행
+- [>] 1-3. (in progress, sbiz-spec) 상가(상권)정보 CSV(15083033) 적재
+      -> 명세 확정 완료: docs/dataspec/sbiz.md (UTF-8/쉼표/39컬럼, 좌표 4326 실측 확정)
 - [ ] 1-4. 좌표계 통일: ST_Transform으로 4326 컬럼 생성
 - [ ] 1-5. GiST 인덱스, pg_trgm 인덱스 생성
 - [ ] 1-6. Verification phase: 실제 알고 있는 주소 5건(하남시, 서울 주요 지점)을
