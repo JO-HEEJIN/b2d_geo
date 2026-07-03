@@ -11,10 +11,13 @@ data/
 *.dbf
 *.prj
 
-# build artifacts
+# test fixtures are tracked even though bulk data files are not
+!**/testdata/*.csv
+
+# build artifacts (root binaries only; cmd/ source must stay tracked)
 bin/
-b2d-server
-b2d-etl
+/b2d-server
+/b2d-etl
 
 # gitnexus local index (derived, 12MB+)
 .gitnexus/
@@ -29,3 +32,6 @@ skills-lock.json
 # editor
 .idea/
 .vscode/
+
+# serena tool cache
+.serena/
