@@ -138,3 +138,24 @@
 - b2d_geo_claude_code_prompt.md (실행 지시서, 데이터 소스 상세 포함)
 - 02_UML_b2d_geo.md / 03_SRS_b2d_geo.md / 04_BRD_b2d_geo.md
 - 05_TestCases_b2d_geo.md / 06_UserProcessFlow_b2d_geo.md
+
+---
+
+## 증보 v1.1 (2026-07-03) — Phase 7 감정평가 모듈
+
+범위 추가: 감정평가사용 사실 조회 레이어 (비교표준지, 거래사례, 토지이용계획,
+토지특성, 지가변동률, 공시지가). 상세는 b2d_geo_phase7_appraisal_prompt.md와
+docs/07_Appraisal_Datasets_b2d_geo.md.
+
+일정 추가 (Phase 6 이후, 총 4주): 7.0 스키마 0.5주 / 7.1 핵심 ETL 1주 /
+7.2 보조 ETL 1주 / 7.3 API 6종 1주 / 7.4 실무 검증 0.5주.
+
+산출물 추가: D-10 감정평가 ETL 파이프라인 6종, D-11 /v1/appraisal API 6종 +
+OpenAPI 증보, D-12 데이터셋 명세서(문서 07).
+
+리스크 추가:
+- R-08 개별공시지가 볼륨 (전국 수천만 필지) — 시군구 선택 적재로 통제
+- R-09 실거래 위치 정밀도 한계로 인한 고객 기대 불일치 — precision 등급 응답 +
+  계약 문서 명시로 통제
+- R-10 서비스가 평가행위로 오인될 법적 리스크 — 판단 로직 부재를 코드 감사로
+  증명(TC-V09), 면책 문구 상시 노출

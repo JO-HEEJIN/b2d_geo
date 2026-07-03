@@ -149,3 +149,32 @@ v1에는 웹 콘솔이 없으므로(SDP 1.3 범위 외) 온보딩은 운영자 �
 3. 흐름 C의 [3] 지도 렌더링은 고객 몫이다. b2d_geo는 타일을 제공하지 않으므로
    고객이 오픈소스 지도(예: 자체 타일)나 기존 지도 계약을 보유해야 한다.
    영업 시 이 전제를 선제 고지한다.
+
+---
+
+## 증보 v1.1 (2026-07-03) — Phase 7 감정평가 모듈
+
+### 흐름 C 확장 — P-02 감정평가사 공시지가기준법 실무
+```
+[1] 대상 필지 확정: /v1/parcel/by-address 로 PNU 확보 (기존 흐름 C[2])
+[2] /v1/appraisal/land-use?pnu= + /v1/appraisal/land-features?pnu=
+    -> 용도지역·저촉 면적비, 이용상황·도로접면·지형 (사실 확인)
+[3] /v1/appraisal/standard-lots?pnu=&use_zone=...&land_category=...
+    -> 후보 표준지 목록 (거리순). 비교표준지 "선정"은 평가사가 한다 —
+       API는 후보와 사실만 준다 (BR-10)
+[4] /v1/appraisal/official-price?pnu=<선정 표준지>
+[5] /v1/appraisal/price-index?sigungu=&use_zone_class=&from=&to=&cumulative=true
+    -> 시점수정 원자료 + 누적률(산식 병기)
+[6] /v1/appraisal/sales?pnu=&radius=&from=&to= -> 그 밖의 요인 검토용 사례
+    (location_precision 한계 notice 확인)
+[7] 격차율 산정·평가액 결정은 평가사/PoC human gate 영역. b2d_geo 역할 종료
+```
+기존 수작업(정부 사이트 3곳 왕복) 대비 [2]~[6]이 API 6호출로 대체된다.
+
+### 흐름 E 증보 — 운영 캘린더
+연 1회(상반기): 표준지·개별공시지가·토지특성·용도지역 일괄 갱신.
+월말: 실거래(직전 3개월 upsert) + 지가변동률(익월 25일 공표 후) 배치.
+
+### 미해결 지점 추가
+4. 개별공시지가 선택 적재 정책상 신규 고객 지역은 첫 적재 리드타임이 발생한다.
+   영업 시 선고지하고, 계약 후 해당 시군구 적재를 온보딩 절차에 포함한다.

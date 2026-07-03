@@ -336,3 +336,25 @@ flowchart LR
 
 온프레미스 패키지는 ETL 결과 DB 스냅샷을 동봉하여 고객망에서 외부 통신 없이
 동작한다. 이것이 BRD의 차별화 축 2번(온프레미스)의 기술적 근거다.
+
+---
+
+## 증보 v1.1 (2026-07-03) — Phase 7 감정평가 모듈
+
+컴포넌트 추가: internal/appraisal (standard-lots, sales, land-use, land-features,
+price-index, official-price 핸들러 + 쿼리). 기존 internal/parcel과 PNU 키로 결합.
+Store interface에 appraisal 조회 메서드 6군 추가.
+
+ERD 신규 테이블 (상세 DDL은 Phase 7 지시서 2절):
+| 테이블 | PK | 공간 컬럼 | 비고 |
+|---|---|---|---|
+| standard_lots | (pnu, base_year) | Point | 토지특성 컬럼 포함 |
+| official_land_prices | (pnu, base_year) | 없음 | 연도 LIST 파티셔닝 |
+| land_features | (pnu, base_year) | 없음 | |
+| use_zones | id | MultiPolygon | ST_MakeValid 적재 |
+| land_sales | id | Point(nullable) | location_precision CHECK |
+| land_price_index | (sigungu, class, month) | 없음 | |
+
+관계: standard_lots/official_land_prices/land_features는 parcels.pnu 참조(논리),
+land_sales.emd_code는 admin_areas.bcode 앞 10자리 체계와 정합.
+api_keys에 scopes text[] 추가 (RealEstate 티어 격리).
