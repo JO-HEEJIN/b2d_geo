@@ -250,3 +250,29 @@ Azure는 로그인돼 있었지만 GPU 쿼터가 0이라 제외했다 (쿼터 �
 
 비용 계획: 잔액 $22, 예상 학습 30h × $0.69 ≈ $21 + 전송 유휴 ~$1.5로 빠듯.
 부족 시 $10 추가 충전 필요할 수 있음을 사용자에게 고지해 둔 상태.
+
+### DEIMv2 클라우드 학습 점화 기록 (2026-07-05)
+
+전송 완료 검증(train 336,068 / val 42,004, 라벨 카운트와 정확 일치) 후
+warm-start(-t ckpts/deimv2_dinov3_m_coco.pth)로 1차 점화했다.
+
+**1차 점화 = CUDA OOM 실패.** 원인: COCO recipe의 multi-scale 학습(480~800px
+랜덤)에서 batch 32가 4090 24GB를 초과 — 640px인 iter 0에서 이미 17.6GB를
+쓰고, 800px 배치를 만나자 23.5GB 한도를 넘었다. iter 0 로그가 정상이어도
+multi-scale 최대 해상도까지는 OOM을 배제할 수 없다는 것.
+
+수정 사항 (deimv2_configs/deimv2_dinov3_m_bridge.yml):
+- total_batch_size 32 → 16
+- LR 선형 반감: base 0.0005 → 0.00025, 백본(DINOv3) 2.5e-5 → 1.25e-5.
+  주의: DEIM config의 optimizer.params는 리스트라 deep merge가 아니라 통째
+  교체 — 부분 오버라이드 불가, 전체 param group을 다시 명시해야 했다.
+- 실행에 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 추가 (단편화 완화)
+
+1차 점화에서 확인된 정상 신호: tuning 로드 시 score head 10개만 unmatched
+(COCO 80클래스 → 9클래스 재초기화, 예상된 동작), denoising_class_embed 1개
+missed, iter 0 종합 loss 48.4 (DEIM은 aux/denoising loss 합산이라 이 스케일이
+정상). 파라미터 18.05M, fwd 51.9 GFLOPs.
+
+부수 교훈: 원격 프로세스 확인 시 `ssh host "pgrep -f train.py ..."`는 커맨드
+라인 문자열 자체에 패턴이 들어가 자기 자신에 매치될 수 있다(오탐 경험).
+패턴을 `[t]rain.py`로 쓰거나 pgrep -x를 쓸 것.

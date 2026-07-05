@@ -15,7 +15,9 @@ num_classes: 9
 remap_mscoco_category: False
 
 # 경로는 deimv2/ 루트 기준 상대경로 (로컬/클라우드 동일 레이아웃 전제)
+# batch 32 -> 16: 4090 24GB에서 multi-scale 800px 조합이 OOM (실측 23.5GB 초과)
 train_dataloader:
+  total_batch_size: 16
   dataset:
     img_folder: ../images/train
     ann_file: ../coco/instances_train.json
@@ -26,6 +28,21 @@ train_dataloader:
     mixup_epochs: [2, 19]
     stop_epoch: 26
     copyblend_epochs: [2, 26]
+
+# batch 반감에 맞춰 LR 선형 반감 (params 리스트는 통째 교체되므로 전체 명시)
+optimizer:
+  type: AdamW
+  params:
+    - params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.0000125
+    - params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.0000125
+      weight_decay: 0.
+    - params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+  lr: 0.00025
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
 
 val_dataloader:
   dataset:
