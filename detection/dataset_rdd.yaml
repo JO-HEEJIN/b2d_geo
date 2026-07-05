@@ -1,0 +1,17 @@
+# AI Hub 040 + RDD2022 보강 (AspaltCrack/Pothole) — val 은 AI Hub 순수 유지
+path: /Users/momo/dev/b2d_geo/detection
+train:
+  - images/train
+  - rdd/images/train
+val: images/val
+
+names:
+  0: ConcreteCrack
+  1: Spalling
+  2: Efflorescene
+  3: Leak
+  4: Exposure
+  5: SteelDefect
+  6: PaintDamage
+  7: AspaltCrack
+  8: Pothole

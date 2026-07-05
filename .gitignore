@@ -4,6 +4,15 @@
 
 # data files (public data downloads, not tracked)
 data/
+detection/labels/
+detection/images/
+detection/coco/
+detection/rdd/
+detection/deimv2/
+detection/.venv/
+detection/runs/
+detection/*.pt
+__pycache__/
 *.zip
 *.csv
 *.shp

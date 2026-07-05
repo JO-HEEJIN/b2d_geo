@@ -1,0 +1,41 @@
+# DEIMv2-M (DINOv3 ViT-Tiny+) — 교량 손상 9클래스 fine-tune
+# 사용법: 이 파일을 deimv2/configs/bridge/ 로 복사 후 deimv2/ 루트에서 실행
+#   cp -r ../deimv2_configs deimv2/configs/bridge
+#   CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 train.py \
+#     -c configs/bridge/deimv2_dinov3_m_bridge.yml --seed=0
+# 원본 102-epoch COCO recipe를 30 epoch으로 비례 축소 (근거: 학습셋 336k = COCO 118k의 2.9배)
+
+__include__: [
+  '../deimv2/deimv2_dinov3_m_coco.yml',
+]
+
+output_dir: ./outputs/deimv2_dinov3_m_bridge
+
+num_classes: 9
+remap_mscoco_category: False
+
+# 경로는 deimv2/ 루트 기준 상대경로 (로컬/클라우드 동일 레이아웃 전제)
+train_dataloader:
+  dataset:
+    img_folder: ../images/train
+    ann_file: ../coco/instances_train.json
+    transforms:
+      policy:
+        epoch: [2, 19, 26]
+  collate_fn:
+    mixup_epochs: [2, 19]
+    stop_epoch: 26
+    copyblend_epochs: [2, 26]
+
+val_dataloader:
+  dataset:
+    img_folder: ../images/val
+    ann_file: ../coco/instances_val.json
+
+epoches: 30
+flat_epoch: 19    # 4 + 30 // 2
+no_aug_epoch: 4   # 12 * 30/102 반올림
+
+DEIMCriterion:
+  matcher:
+    matcher_change_epoch: 24   # 80 * 30/102
