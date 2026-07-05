@@ -168,3 +168,63 @@ SQL 인젝션을 원천 차단한다 (보안 체크리스트 1번 항목의 실�
 ### 관련 커밋 해시
 
 - 0a883ec feat: bootstrap project skeleton with PostGIS schema and migration runner
+
+---
+
+## v2 Detection — 교량 외관 손상 탐지 파이프라인 (2026-07-05)
+
+### 배경
+
+geo 본선(Phase 1 ETL)과 별도로, AI Hub 040 "교량 3D 외관점검 영상 데이터"를
+학습 데이터로 하는 손상 탐지(v2 detection) 트랙을 시작했다. 리포지토리에
+이미 확보돼 있던 라벨링 zip 20개(Training 10 + Validation 10)가 출발점이다.
+
+### 데이터 변환 3종과 검증 수치
+
+**bridge_converter.py** — labelme형 폴리곤 JSON을 압축 해제 없이 zip 스트리밍
+으로 읽어 YOLO bbox txt로 변환. train 336,068 / val 42,004 파일이 JSON 수와
+정확히 일치했고, 정상데이터(빈 shapes)는 빈 txt로 유지해 negative sample
+78,715 + 9,839장을 확보했다. 생성/검증 분리 원칙에 따라 변환기 코드를 참조하지
+않는 독립 검증 에이전트 3개(수치 재계산 / 전수 무결성 / 엣지케이스 반증)를
+병렬로 돌렸고 전부 통과했다. 전 코퍼스 box-for-box 재계산의 최대 편차는
+5.0e-7(순수 6자리 반올림 오차)이었다. 로그의 zero_area_bbox 2건은 실물 확인
+결과 3점이 모두 y=340인 수평선 퇴화 폴리곤으로, 스킵이 정당했다.
+
+**coco_converter.py** — DEIMv2 입력용 COCO json. annotations 658,076 / 96,916
+개가 QA 확정치와 일치, 왕복 스팟체크 1,000건 불일치 0.
+
+**rdd_converter.py** — RDD2022 3개국(Japan/India/Czech) VOC xml에서 균열
+계열(D00/D01/D10/D11/D20/D0w0)→AspaltCrack, D40→Pothole로 매핑해 12,291장
+채택. 최약 클래스 Pothole이 629 → 6,256 박스로 약 10배가 됐다. 채택 이미지
+안의 균열 변형(D01 등)을 매핑하지 않으면 false negative로 학습되므로 포함했고,
+차선 흐림/맨홀(D43/D44/D50)은 손상이 아니므로 배경 처리했다. val은 AI Hub
+순수 유지(평가 일관성).
+
+### 아키텍처 결정과 라이선스 게이트
+
+- 주력 DEIMv2-M(DINOv3 ViT-Tiny+ 백본): 코드 Apache-2.0, COCO 54.7 AP급
+  실시간 SOTA. RGB 산업검사 full fine-tune에서 DINOv3 초기화가 ImageNet보다
+  낫다는 직접 비교 논문(arXiv 2605.23472)이 결정 근거.
+- YOLO11m은 Ultralytics AGPL-3.0이라 배포 금지, 내부 대조군 전용으로 강등.
+- dacl10k는 CC BY-NC 4.0(비상업)이라 학습 편입을 취소하고 외부 벤치마크로만.
+- RDD2022는 공식 repo에 라이선스 명시가 없었는데, figshare **API**
+  (api.figshare.com/v2/articles/21431547)로 CC BY 4.0을 확정했다. 웹페이지가
+  403이어도 API는 열려 있는 경우가 있다.
+
+### 함정 기록
+
+macOS unzip(Info-ZIP 6.0)이 zip 엔트리명 "no124IG1P01_001495 - 복사본.jpg"
+(UTF-8 플래그 정상)를 깨진 바이트로 추출 시도하다 "disk full?"로 오판하고
+대화형 프롬프트에서 죽었다(exit 50). 디스크는 2.8TB 여유였다. Python
+zipfile로 교체하니 문제없이 끝났다. 대용량 zip 추출은 처음부터 Python으로.
+
+### 현재 진행
+
+- YOLO11m 대조군: M5 Max MPS, 512px, batch 32, 12 epochs, 실측 1.5s/it
+  (10,503 step/epoch) → 약 55시간 예상. detection/runs/baseline_y11m.
+- DEIMv2는 클라우드 CUDA 전제: 백본/COCO 체크포인트 다운로드, 30 epoch 축소
+  recipe config, 실행 명령까지 준비 완료 (detection/README.md).
+
+### 관련 커밋 해시
+
+- f704b68 feat: add v2 detection pipeline for bridge damage
