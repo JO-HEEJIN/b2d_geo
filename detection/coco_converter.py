@@ -3,7 +3,8 @@
 
 bridge_converter.py 산출물(정규화 cx cy w h, 512x512 전수 확인)을 읽어
 detection/coco/instances_{train,val}.json 을 생성한다.
-- bbox: 절대픽셀 [x, y, w, h], category_id: 1-기반 (COCO 표준, DEIM remap off 전제)
+- bbox: 절대픽셀 [x, y, w, h], category_id: 0-기반 (DEIM은 remap off 시
+  category_id를 라벨 인덱스로 직접 사용 — 1-기반이면 CUDA index assert)
 - 빈 txt(정상데이터)도 images[]에 포함 (negative sample)
 
 사용:
@@ -36,7 +37,7 @@ def convert_split(label_dir, img_size):
             annotations.append({
                 "id": ann_id,
                 "image_id": img_id,
-                "category_id": int(cls) + 1,
+                "category_id": int(cls),
                 "bbox": [round(x, 2), round(y, 2), round(bw, 2), round(bh, 2)],
                 "area": round(bw * bh, 2),
                 "iscrowd": 0,
@@ -52,7 +53,7 @@ def main():
     args = ap.parse_args()
 
     classes = (args.labels / "classes.txt").read_text().split()
-    categories = [{"id": i + 1, "name": n} for i, n in enumerate(classes)]
+    categories = [{"id": i, "name": n} for i, n in enumerate(classes)]
     args.out.mkdir(parents=True, exist_ok=True)
 
     for split in ("train", "val"):

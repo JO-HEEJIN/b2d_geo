@@ -48,7 +48,7 @@ def main():
             coco["annotations"].append({
                 "id": ann_id,
                 "image_id": img_id,
-                "category_id": int(cls) + 1,
+                "category_id": int(cls),
                 "bbox": [round(x, 2), round(y, 2), round(pw, 2), round(ph, 2)],
                 "area": round(pw * ph, 2),
                 "iscrowd": 0,

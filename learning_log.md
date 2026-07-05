@@ -276,3 +276,19 @@ missed, iter 0 종합 loss 48.4 (DEIM은 aux/denoising loss 합산이라 이 스
 부수 교훈: 원격 프로세스 확인 시 `ssh host "pgrep -f train.py ..."`는 커맨드
 라인 문자열 자체에 패턴이 들어가 자기 자신에 매치될 수 있다(오탐 경험).
 패턴을 `[t]rain.py`로 쓰거나 pgrep -x를 쓸 것.
+
+**2차 점화 = CUDA device-side assert 실패 (SIGABRT).** IndexKernel
+"index out of bounds" 대량 출력 후 abort. 원인: DEIM은
+remap_mscoco_category=False일 때 COCO json의 category_id를 라벨 인덱스로
+**그대로** 사용한다 (engine/data/dataset/coco_dataset.py:135). 우리 json은
+COCO 관례대로 1~9 (1-기반)라 클래스 9가 [0..8] 밖 → gather에서 assert.
+coco_converter/coco_merge_rdd를 0-기반으로 수정하고 json 3종 재생성·검증
+(cids ⊆ {0..8} assert) 후 재업로드했다. 커스텀 데이터셋 + remap off 조합에선
+category_id를 0-기반으로 만들어야 한다.
+
+부수 교훈 2: 셸 워처에서 `grep X | cut ... && echo VERDICT`는 파이프라인
+종료코드가 cut 기준이라 grep 미매치여도 VERDICT가 찍힌다 (오탐 경험).
+판정용 grep은 파이프 없이 단독 실행할 것.
+
+부수 교훈 3: iter 0 로그가 정상이어도 CUDA assert는 비동기라 수백 iter 뒤에
+터질 수 있다. multi-scale OOM과 마찬가지로 "초반 정상 = 안전"이 아니다.
