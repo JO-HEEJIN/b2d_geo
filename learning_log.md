@@ -292,3 +292,14 @@ category_id를 0-기반으로 만들어야 한다.
 
 부수 교훈 3: iter 0 로그가 정상이어도 CUDA assert는 비동기라 수백 iter 뒤에
 터질 수 있다. multi-scale OOM과 마찬가지로 "초반 정상 = 안전"이 아니다.
+
+**3~6차 점화: 성능 진단 체인.** 0-기반 수정 후 3차는 정상 학습에 들어갔으나
+640px/batch16 기준 epoch 3h → 30 epochs $63로 예산(잔액 $19) 초과. 이후 진단:
+(a) 512px 축소 → epoch 2.5h, util 29%. (b) MooseFS가 병목이라 보고 27GB를
+/dev/shm RAM 디스크로 복사 → **효과 없음** (util 18%, data 시간 0.04s/0.42s
+— IO는 애초에 9%뿐). 진범은 컨테이너 CPU 쿼터였다: nproc은 64를 보여주지만
+cgroup cpu.max는 13.6코어. DETR 계열 Hungarian 매칭(CPU)이 이 쿼터에 묶여
+GPU가 굶는다. (c) 최종: batch 32(512px에서 VRAM 18.8GB 실측 안전) + 10 epochs
++ LR 원복 → 0.57s/it, epoch 1.7h, 총 ~17.5h ≈ $12로 확정. 교훈: RunPod에서
+nproc/free는 호스트 수치라 믿으면 안 되고 cgroup(cpu.max, memory.max)을 봐야
+하며, GPU util 저하의 원인은 data 시간 필드로 IO/CPU를 먼저 분리해야 한다.

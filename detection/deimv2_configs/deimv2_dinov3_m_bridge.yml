@@ -15,44 +15,69 @@ num_classes: 9
 remap_mscoco_category: False
 
 # 경로는 deimv2/ 루트 기준 상대경로 (로컬/클라우드 동일 레이아웃 전제)
-# batch 32 -> 16: 4090 24GB에서 multi-scale 800px 조합이 OOM (실측 23.5GB 초과)
+# batch 32 @512px: max-scale 640에서 ~18-20GB (800px 조합이던 640 기본 recipe는 OOM이었음)
+# 640 -> 512: 원본 해상도가 512라 640은 업스케일 낭비 (연산 36% 절감, 예산 내 완주용)
 train_dataloader:
-  total_batch_size: 16
+  total_batch_size: 32
+  num_workers: 8
   dataset:
-    img_folder: ../images/train
+    # RAM 디스크 (MooseFS 소파일 읽기가 병목 — util 29% 실측. pod 재시작 시 재복사 필요)
+    img_folder: /dev/shm/images/train
     ann_file: ../coco/instances_train.json
     transforms:
+      ops:
+        - {type: Mosaic, output_size: 320, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: True, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: Resize, size: [512, 512], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
       policy:
-        epoch: [2, 19, 26]
+        epoch: [1, 7, 8]
   collate_fn:
-    mixup_epochs: [2, 19]
-    stop_epoch: 26
-    copyblend_epochs: [2, 26]
+    base_size: 512
+    mixup_epochs: [1, 7]
+    stop_epoch: 8
+    copyblend_epochs: [1, 8]
 
-# batch 반감에 맞춰 LR 선형 반감 (params 리스트는 통째 교체되므로 전체 명시)
+# batch 32 기준 원 recipe LR (params 리스트는 deep merge가 아니라 통째 교체라 전체 명시)
 optimizer:
   type: AdamW
   params:
     - params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
-      lr: 0.0000125
+      lr: 0.000025
     - params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
-      lr: 0.0000125
+      lr: 0.000025
       weight_decay: 0.
     - params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
-  lr: 0.00025
+  lr: 0.0005
   betas: [0.9, 0.999]
   weight_decay: 0.0001
 
 val_dataloader:
+  num_workers: 8
   dataset:
-    img_folder: ../images/val
+    img_folder: /dev/shm/images/val
     ann_file: ../coco/instances_val.json
+    transforms:
+      ops:
+        - {type: Resize, size: [512, 512], }
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
 
-epoches: 30
-flat_epoch: 19    # 4 + 30 // 2
-no_aug_epoch: 4   # 12 * 30/102 반올림
+eval_spatial_size: [512, 512]
+
+epoches: 10
+flat_epoch: 7
+no_aug_epoch: 2
 
 DEIMCriterion:
   matcher:
-    matcher_change_epoch: 24   # 80 * 30/102
+    matcher_change_epoch: 8
