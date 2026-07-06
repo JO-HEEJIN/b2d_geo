@@ -21,15 +21,15 @@ train_dataloader:
     ann_file: ../coco/instances_train_rdd_os.json
     transforms:
       policy:
-        epoch: [1, 11, 12]
+        epoch: [1, 7, 8]
   collate_fn:
-    mixup_epochs: [1, 11]
-    stop_epoch: 12
-    copyblend_epochs: [1, 12]
+    mixup_epochs: [1, 7]
+    stop_epoch: 8
+    copyblend_epochs: [1, 8]
 
-epoches: 15
-flat_epoch: 11    # 4 + 15 // 2
-no_aug_epoch: 3
+epoches: 10
+flat_epoch: 7
+no_aug_epoch: 2
 
 # 수렴된 1차 best에서 이어가므로 LR 반감 (안정성)
 optimizer:
@@ -48,4 +48,4 @@ optimizer:
 
 DEIMCriterion:
   matcher:
-    matcher_change_epoch: 12
+    matcher_change_epoch: 8
