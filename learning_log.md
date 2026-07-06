@@ -303,3 +303,12 @@ GPU가 굶는다. (c) 최종: batch 32(512px에서 VRAM 18.8GB 실측 안전) + 
 + LR 원복 → 0.57s/it, epoch 1.7h, 총 ~17.5h ≈ $12로 확정. 교훈: RunPod에서
 nproc/free는 호스트 수치라 믿으면 안 되고 cgroup(cpu.max, memory.max)을 봐야
 하며, GPU util 저하의 원인은 data 시간 필드로 IO/CPU를 먼저 분리해야 한다.
+
+### YOLO 대조군 발산 및 재시작 (2026-07-06)
+
+로컬 MPS 대조군이 epoch 2(mAP50-95 0.049)를 정점으로 val만 붕괴했다
+(ep3 0.006, ep4 0.000; val cls loss 2.70→4.17→6.06 지수 증가). train loss는
+정상 유지 — 훈련 자체가 아니라 검증/EMA 가중치가 오염되는 패턴으로, MPS +
+AMP(fp16) 수치 불안정으로 진단했다. amp=False + 명시적 SGD(lr0=0.01,
+cos_lr)로 재시작 (baseline_y11m_v2, epochs 12→10으로 amp off 속도 저하 보상).
+교훈: MPS 학습에서 "train loss 정상 + val 지수 악화"를 보면 AMP부터 의심.
