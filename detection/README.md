@@ -68,8 +68,17 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py \
 필요 데이터 동기화: `detection/{images,coco}` (27GB). RDD 보강분은 대조군 비교 후
 COCO json 재생성으로 병합 예정.
 
+## 1차 결과 (2026-07-06)
+
+DEIMv2-M 10 epochs, RunPod 4090: **val mAP@[.50:.95] = 0.161**.
+체크포인트/로그: `runs/deimv2_m_bridge/` (best_stg2.pth, train_full.log,
+perclass.log). per-class: SteelDefect .361 / AspaltCrack .227 / ConcreteCrack
+.216 / PaintDamage .195 / Leak .166 / Pothole .107 / Exposure .064 / Spalling
+.058 / Efflorescene .054. 오버샘플링 미적용 순정 baseline — 상세는
+learning_log 참조.
+
 ## 다음 작업
 
-1. YOLO11m 대조군 학습 진행 중 (runs/baseline_y11m, 12 epochs, ~55h)
-2. 대조군 완료 → per-class AP 분석 → RDD 보강 run (dataset_rdd.yaml, 작성됨)
-3. 클라우드 GPU 확보 → DEIMv2-M 학습 (위 명령)
+1. YOLO11m 대조군 (runs/baseline_y11m_v2, amp off 재시작본) — 7/9경 완료 → 비교 분석
+2. 2차 학습 후보: RDD 병합(coco/instances_train_rdd.json 준비됨) + 희소 클래스
+   오버샘플링 + 스케줄 연장 — GPU 예산 확보 후
