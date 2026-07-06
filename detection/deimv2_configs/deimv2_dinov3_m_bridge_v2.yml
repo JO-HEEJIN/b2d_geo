@@ -1,0 +1,51 @@
+# DEIMv2-M 2차: RDD 병합 + 희소 클래스 오버샘플링, 1차 best에서 이어서 fine-tune
+# 사용법 (pod에서):
+#   1) AI Hub images + rdd 트리를 /dev/shm 아래로 복사:
+#      cp -r /workspace/images /dev/shm/images && mkdir -p /dev/shm/rdd && cp -r /workspace/rdd/images /dev/shm/rdd/images
+#   2) cp -r ../deimv2_configs configs/bridge
+#   3) torchrun --master_port=7777 --nproc_per_node=1 train.py \
+#        -c configs/bridge/deimv2_dinov3_m_bridge_v2.yml --use-amp --seed=0 \
+#        -t ckpts/best_stg2.pth
+# 병합 json의 file_name이 "images/train/..." / "rdd/images/train/..." 프리픽스라
+# img_folder는 두 트리의 공통 루트(/dev/shm)여야 함.
+
+__include__: [
+  './deimv2_dinov3_m_bridge.yml',
+]
+
+output_dir: ./outputs/deimv2_dinov3_m_bridge_v2
+
+train_dataloader:
+  dataset:
+    img_folder: /dev/shm
+    ann_file: ../coco/instances_train_rdd_os.json
+    transforms:
+      policy:
+        epoch: [1, 11, 12]
+  collate_fn:
+    mixup_epochs: [1, 11]
+    stop_epoch: 12
+    copyblend_epochs: [1, 12]
+
+epoches: 15
+flat_epoch: 11    # 4 + 15 // 2
+no_aug_epoch: 3
+
+# 수렴된 1차 best에서 이어가므로 LR 반감 (안정성)
+optimizer:
+  type: AdamW
+  params:
+    - params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.0000125
+    - params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.0000125
+      weight_decay: 0.
+    - params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+  lr: 0.00025
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+DEIMCriterion:
+  matcher:
+    matcher_change_epoch: 12
