@@ -312,3 +312,20 @@ nproc/free는 호스트 수치라 믿으면 안 되고 cgroup(cpu.max, memory.ma
 AMP(fp16) 수치 불안정으로 진단했다. amp=False + 명시적 SGD(lr0=0.01,
 cos_lr)로 재시작 (baseline_y11m_v2, epochs 12→10으로 amp off 속도 저하 보상).
 교훈: MPS 학습에서 "train loss 정상 + val 지수 악화"를 보면 AMP부터 의심.
+
+### DEIMv2 1차 학습 완료 (2026-07-06)
+
+최종 val mAP@[.50:.95] = 0.161 (AP 궤적: 0.127 warm-start → 증강 딥 0.097 →
+회복 → 막판 no-aug/matcher 전환에서 0.141→0.161 점프). 총 비용 약 $18
+(RunPod 4090 secure, 재시작 4회 + 전송 유휴 포함), 잔액 $4.20. 체크포인트
+best_stg2.pth(280MB)·로그·per-class 결과를 md5 검증 후 로컬 회수하고 pod을
+종료했다 (detection/runs/deimv2_m_bridge/).
+
+per-class에서 배운 것: 성능은 박스 수와 비례하지 않았다. Efflorescene은
+train 박스 108k로 3위 규모인데 AP 0.054 최하위 — 경계가 모호한 확산형
+손상이라 bbox 회귀 자체가 어렵다. 반대로 SteelDefect는 258박스뿐인데 AP
+0.361 최고 (시각 변별력 크고 박스가 큼; 단 val 38개라 분산 큼). 결론:
+다음 사이클의 leverage는 (1) 오버샘플링+copy-paste (이번 run 미적용),
+(2) RDD 병합 (Pothole 0.107 보강), (3) 스케줄 연장 (막판 기울기 +2.0/epoch
+남은 채 종료). per-class 평가는 원격 det_solver.val()에 pycocotools
+precision 텐서 슬라이스 8줄을 패치해 test-only로 뽑았다.
