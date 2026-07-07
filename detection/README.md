@@ -77,8 +77,15 @@ perclass.log). per-class: SteelDefect .361 / AspaltCrack .227 / ConcreteCrack
 .058 / Efflorescene .054. 오버샘플링 미적용 순정 baseline — 상세는
 learning_log 참조.
 
+## 2차 결과 (2026-07-07)
+
+RDD 병합 + 오버샘플링(×20/×40/×50), 1차 best에서 10 epochs fine-tune:
+**val mAP 0.151** (runs/deimv2_m_bridge_v2/). per-class 요지 — 중간 개입 성공
+(Spalling +64%, Pothole +28%), 극단 복제 역효과 (SteelDefect −51%,
+PaintDamage −35%), 상세는 paper/draft.md §5.3. 배포 권고: 클래스별 모델 선택.
+
 ## 다음 작업
 
-1. YOLO11m 대조군 (runs/baseline_y11m_v2, amp off 재시작본) — 7/9경 완료 → 비교 분석
-2. 2차 학습 후보: RDD 병합(coco/instances_train_rdd.json 준비됨) + 희소 클래스
-   오버샘플링 + 스케줄 연장 — GPU 예산 확보 후
+1. YOLO11m 대조군 완주 (내일) → 논문 comparator 수치 채우기
+2. 오버샘플링 ablation (×20 단독 등) — 후속 실험 후보
+3. 논문 LaTeX 변환 (ICML 템플릿) — Opus
