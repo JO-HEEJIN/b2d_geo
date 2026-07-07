@@ -9,7 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/jijeok"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/juso"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landsales"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
 	"github.com/JO-HEEJIN/b2d_geo/internal/store"
 	"github.com/JO-HEEJIN/b2d_geo/migrations"
@@ -17,7 +19,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -31,6 +33,16 @@ func main() {
 	case "sbiz":
 		if err := runSbiz(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "sbiz failed:", err)
+			os.Exit(1)
+		}
+	case "jijeok":
+		if err := runJijeok(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "jijeok failed:", err)
+			os.Exit(1)
+		}
+	case "land-sales":
+		if err := runLandSales(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "land-sales failed:", err)
 			os.Exit(1)
 		}
 	case "juso":
@@ -143,4 +155,50 @@ func runSbiz(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("unknown sbiz action: %s", args[0])
 	}
+}
+
+// runJijeok: b2d-etl jijeok <zip...> — 연속지적도 시도 zip 적재.
+// source_version은 파일명 AL_D002_{시도}_{YYYYMMDD}.zip의 날짜에서 취한다.
+func runJijeok(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: b2d-etl jijeok <zip...>")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	for _, zp := range args {
+		base := zp[len(zp)-12 : len(zp)-4] // YYYYMMDD
+		ver := base[:4] + "-" + base[4:6] + "-" + base[6:8]
+		stats, err := jijeok.Load(ctx, pool, zp, ver)
+		if err != nil {
+			return fmt.Errorf("%s: %w", zp, err)
+		}
+		fmt.Printf("jijeok %s: rows=%d skipped=%d\n", zp, stats.Rows, stats.Skipped)
+	}
+	return nil
+}
+
+// runLandSales: b2d-etl land-sales <lawd5> <YYYYMM> — 토지 실거래 월 적재 (멱등).
+func runLandSales(ctx context.Context, args []string) error {
+	if len(args) != 2 || len(args[0]) != 5 || len(args[1]) != 6 {
+		return fmt.Errorf("usage: b2d-etl land-sales <lawd_cd(5)> <YYYYMM>")
+	}
+	key := os.Getenv("MOLIT_API_KEY")
+	if key == "" {
+		return fmt.Errorf("MOLIT_API_KEY not set (.env 참조)")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	stats, err := landsales.Load(ctx, pool, key, "data/juso_entrance", args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("land-sales %s %s: fetched=%d inserted=%d no_emd=%d ambiguous=%d no_geom=%d\n",
+		args[0], args[1], stats.Fetched, stats.Inserted, stats.NoEmd, stats.Ambiguous, stats.NoGeom)
+	return nil
 }

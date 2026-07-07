@@ -1,0 +1,59 @@
+// Package parcel은 parcels 테이블 조회를 제공한다 (사실 반환만).
+package parcel
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Parcel은 필지 1건의 조회 결과다.
+type Parcel struct {
+	PNU           string          `json:"pnu"`
+	Bcode         string          `json:"bcode"`
+	Jibun         string          `json:"jibun"`
+	LandCategory  string          `json:"land_category,omitempty"`
+	SourceVersion string          `json:"source_version"`
+	Centroid      [2]float64      `json:"centroid"` // [lon, lat]
+	Geometry      json.RawMessage `json:"geometry,omitempty"`
+}
+
+const baseSelect = `
+SELECT pnu, bcode, jibun, COALESCE(land_category,''),
+       source_version::text,
+       ST_X(ST_PointOnSurface(geom)), ST_Y(ST_PointOnSurface(geom)),
+       ST_AsGeoJSON(geom, 6)
+FROM parcels `
+
+func scanOne(row pgx.Row, withGeom bool) (*Parcel, error) {
+	var p Parcel
+	var geo string
+	if err := row.Scan(&p.PNU, &p.Bcode, &p.Jibun, &p.LandCategory,
+		&p.SourceVersion, &p.Centroid[0], &p.Centroid[1], &geo); err != nil {
+		return nil, err
+	}
+	if withGeom {
+		p.Geometry = json.RawMessage(geo)
+	}
+	return &p, nil
+}
+
+// ByPNU는 PNU(19자리)로 필지를 찾는다.
+func ByPNU(ctx context.Context, pool *pgxpool.Pool, pnu string, withGeom bool) (*Parcel, error) {
+	return scanOne(pool.QueryRow(ctx, baseSelect+`WHERE pnu = $1`, pnu), withGeom)
+}
+
+// ByPoint는 WGS84 좌표를 포함하는 필지를 찾는다.
+func ByPoint(ctx context.Context, pool *pgxpool.Pool, lon, lat float64, withGeom bool) (*Parcel, error) {
+	return scanOne(pool.QueryRow(ctx,
+		baseSelect+`WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint($1,$2),4326)) LIMIT 1`,
+		lon, lat), withGeom)
+}
+
+// ByJibun은 법정동코드 + 지번(예: "179-3")으로 필지를 찾는다.
+func ByJibun(ctx context.Context, pool *pgxpool.Pool, bcode, jibun string, withGeom bool) (*Parcel, error) {
+	return scanOne(pool.QueryRow(ctx,
+		baseSelect+`WHERE bcode = $1 AND jibun = $2 LIMIT 1`, bcode, jibun), withGeom)
+}

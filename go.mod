@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jonas-p/go-shp v0.1.1
 	golang.org/x/text v0.29.0
 )
 
