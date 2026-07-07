@@ -116,7 +116,8 @@
       + api_keys.scopes text[] + GiST 인덱스 -> 검증: 마이그레이션 왕복 성공,
       gitnexus 재인덱싱 (b2d-data, 0.5주)
 - [>] 7-키. API 키 선확보 완료 (2026-07-07, .env 저장·커밋 금지):
-      MOLIT_API_KEY (토지매매 실거래 RTMSDataSvcLandTrade — 활성화 대기 중),
+      MOLIT_API_KEY (토지매매 실거래 RTMSDataSvcLandTrade — 검증 완료: 강남구
+      202605 실데이터 수신. 주의: curl 기본 UA는 WAF 차단, Mozilla UA 필수),
       REB_API_KEY (R-ONE — 실호출 검증 완료, 월 지역별 지가변동률
       STATBL_ID=A_2024_00903, 202605 실데이터 확인). JUSO_API_KEY는 Phase 1 참조
 - [ ] 7-1. ETL: 표준지공시지가(전국) + 지가변동률(R-ONE, 월) + 실거래가(월 배치,
