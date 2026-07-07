@@ -70,7 +70,8 @@ func Load(ctx context.Context, pool *pgxpool.Pool, apiKey, entranceDir, lawd, ym
 	client := &http.Client{Timeout: 30 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("molit request failed: %s",
+			strings.ReplaceAll(strings.ReplaceAll(err.Error(), apiKey, "***"), url.QueryEscape(apiKey), "***"))
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)

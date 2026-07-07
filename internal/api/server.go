@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"log"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -100,7 +102,8 @@ func (s *Server) parcelByJibun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bcode(10 digits), jibun required")
 		return
 	}
-	p, err := parcel.ByJibun(r.Context(), s.Pool, bcode, jibun, wantGeom(r))
+	p, err := parcel.ByJibun(r.Context(), s.Pool, bcode, jibun,
+		r.URL.Query().Get("san") == "true", wantGeom(r))
 	s.respondParcel(w, p, err)
 }
 
@@ -135,7 +138,7 @@ type molitResp struct {
 
 func (s *Server) appraisalSales(w http.ResponseWriter, r *http.Request) {
 	lawd, ymd := r.URL.Query().Get("lawd_cd"), r.URL.Query().Get("deal_ymd")
-	if len(lawd) != 5 || len(ymd) != 6 {
+	if !allDigits(lawd) || !allDigits(ymd) || len(lawd) != 5 || len(ymd) != 6 {
 		writeErr(w, http.StatusBadRequest, "lawd_cd(5), deal_ymd(YYYYMM) required")
 		return
 	}
@@ -143,7 +146,8 @@ func (s *Server) appraisalSales(w http.ResponseWriter, r *http.Request) {
 		url.QueryEscape(s.MolitKey), lawd, ymd)
 	body, err := s.fetch(r.Context(), u)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream molit: "+err.Error())
+		log.Printf("appraisal/sales upstream error: %v", redactKey(err, s.MolitKey))
+		writeErr(w, http.StatusBadGateway, "upstream unavailable")
 		return
 	}
 	var mr molitResp
@@ -161,7 +165,7 @@ func (s *Server) appraisalSales(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) appraisalPriceIndex(w http.ResponseWriter, r *http.Request) {
 	ym := r.URL.Query().Get("ym")
-	if len(ym) != 6 {
+	if !allDigits(ym) || len(ym) != 6 {
 		writeErr(w, http.StatusBadRequest, "ym(YYYYMM) required")
 		return
 	}
@@ -169,7 +173,8 @@ func (s *Server) appraisalPriceIndex(w http.ResponseWriter, r *http.Request) {
 		url.QueryEscape(s.RebKey), ym)
 	body, err := s.fetch(r.Context(), u)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream r-one: "+err.Error())
+		log.Printf("appraisal/price-index upstream error: %v", redactKey(err, s.RebKey))
+		writeErr(w, http.StatusBadGateway, "upstream unavailable")
 		return
 	}
 	var raw map[string]any
@@ -181,6 +186,23 @@ func (s *Server) appraisalPriceIndex(w http.ResponseWriter, r *http.Request) {
 		"source": "R-ONE 전국지가변동률조사 (A_2024_00903, 월)", "ym": ym,
 		"data": raw["SttsApiTblData"],
 	})
+}
+
+func allDigits(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// redactKey는 에러 문자열에서 API 키(원문/URL인코딩)를 가린다.
+func redactKey(err error, key string) string {
+	msg := err.Error()
+	msg = strings.ReplaceAll(msg, key, "***")
+	msg = strings.ReplaceAll(msg, url.QueryEscape(key), "***")
+	return msg
 }
 
 func (s *Server) fetch(ctx context.Context, u string) ([]byte, error) {

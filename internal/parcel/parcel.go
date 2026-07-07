@@ -53,7 +53,14 @@ func ByPoint(ctx context.Context, pool *pgxpool.Pool, lon, lat float64, withGeom
 }
 
 // ByJibun은 법정동코드 + 지번(예: "179-3")으로 필지를 찾는다.
-func ByJibun(ctx context.Context, pool *pgxpool.Pool, bcode, jibun string, withGeom bool) (*Parcel, error) {
+// 같은 지번이 토지/임야 대장에 공존할 수 있어 (PNU 11번째 자리 1=토지, 2=임야)
+// san=false면 토지, san=true면 임야를 조회한다.
+func ByJibun(ctx context.Context, pool *pgxpool.Pool, bcode, jibun string, san, withGeom bool) (*Parcel, error) {
+	gb := "1"
+	if san {
+		gb = "2"
+	}
 	return scanOne(pool.QueryRow(ctx,
-		baseSelect+`WHERE bcode = $1 AND jibun = $2 LIMIT 1`, bcode, jibun), withGeom)
+		baseSelect+`WHERE bcode = $1 AND jibun = $2 AND substring(pnu, 11, 1) = $3 LIMIT 1`,
+		bcode, jibun, gb), withGeom)
 }
