@@ -13,6 +13,7 @@ import (
 type Parcel struct {
 	PNU           string          `json:"pnu"`
 	Bcode         string          `json:"bcode"`
+	AddressName   string          `json:"address_name,omitempty"` // 법정동 전체명
 	Jibun         string          `json:"jibun"`
 	LandCategory  string          `json:"land_category,omitempty"`
 	SourceVersion string          `json:"source_version"`
@@ -21,16 +22,16 @@ type Parcel struct {
 }
 
 const baseSelect = `
-SELECT pnu, bcode, jibun, COALESCE(land_category,''),
-       source_version::text,
-       ST_X(ST_PointOnSurface(geom)), ST_Y(ST_PointOnSurface(geom)),
-       ST_AsGeoJSON(geom, 6)
-FROM parcels `
+SELECT p.pnu, p.bcode, COALESCE(a.name,''), p.jibun, COALESCE(p.land_category,''),
+       p.source_version::text,
+       ST_X(ST_PointOnSurface(p.geom)), ST_Y(ST_PointOnSurface(p.geom)),
+       ST_AsGeoJSON(p.geom, 6)
+FROM parcels p LEFT JOIN admin_areas a ON a.bcode = p.bcode `
 
 func scanOne(row pgx.Row, withGeom bool) (*Parcel, error) {
 	var p Parcel
 	var geo string
-	if err := row.Scan(&p.PNU, &p.Bcode, &p.Jibun, &p.LandCategory,
+	if err := row.Scan(&p.PNU, &p.Bcode, &p.AddressName, &p.Jibun, &p.LandCategory,
 		&p.SourceVersion, &p.Centroid[0], &p.Centroid[1], &geo); err != nil {
 		return nil, err
 	}
@@ -42,13 +43,13 @@ func scanOne(row pgx.Row, withGeom bool) (*Parcel, error) {
 
 // ByPNU는 PNU(19자리)로 필지를 찾는다.
 func ByPNU(ctx context.Context, pool *pgxpool.Pool, pnu string, withGeom bool) (*Parcel, error) {
-	return scanOne(pool.QueryRow(ctx, baseSelect+`WHERE pnu = $1`, pnu), withGeom)
+	return scanOne(pool.QueryRow(ctx, baseSelect+`WHERE p.pnu = $1`, pnu), withGeom)
 }
 
 // ByPoint는 WGS84 좌표를 포함하는 필지를 찾는다.
 func ByPoint(ctx context.Context, pool *pgxpool.Pool, lon, lat float64, withGeom bool) (*Parcel, error) {
 	return scanOne(pool.QueryRow(ctx,
-		baseSelect+`WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint($1,$2),4326)) LIMIT 1`,
+		baseSelect+`WHERE ST_Contains(p.geom, ST_SetSRID(ST_MakePoint($1,$2),4326)) LIMIT 1`,
 		lon, lat), withGeom)
 }
 
@@ -61,6 +62,6 @@ func ByJibun(ctx context.Context, pool *pgxpool.Pool, bcode, jibun string, san, 
 		gb = "2"
 	}
 	return scanOne(pool.QueryRow(ctx,
-		baseSelect+`WHERE bcode = $1 AND jibun = $2 AND substring(pnu, 11, 1) = $3 LIMIT 1`,
+		baseSelect+`WHERE p.bcode = $1 AND p.jibun = $2 AND substring(p.pnu, 11, 1) = $3 LIMIT 1`,
 		bcode, jibun, gb), withGeom)
 }
