@@ -19,6 +19,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/JO-HEEJIN/b2d_geo/internal/geocode"
+	"github.com/JO-HEEJIN/b2d_geo/internal/places"
+	"github.com/JO-HEEJIN/b2d_geo/internal/revgeo"
 	"github.com/JO-HEEJIN/b2d_geo/internal/parcel"
 )
 
@@ -36,6 +39,9 @@ func New(pool *pgxpool.Pool, molitKey, rebKey string) http.Handler {
 		Client: &http.Client{Timeout: 15 * time.Second}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.health)
+	mux.HandleFunc("GET /v1/geocode", s.geocodeHandler)
+	mux.HandleFunc("GET /v1/reverse", s.reverseHandler)
+	mux.HandleFunc("GET /v1/places/search", s.placesSearchHandler)
 	mux.HandleFunc("GET /v1/parcel/by-point", s.parcelByPoint)
 	mux.HandleFunc("GET /v1/parcel/by-jibun", s.parcelByJibun)
 	mux.HandleFunc("GET /v1/parcel/{pnu}", s.parcelByPNU)
@@ -105,6 +111,59 @@ func (s *Server) parcelByJibun(w http.ResponseWriter, r *http.Request) {
 	p, err := parcel.ByJibun(r.Context(), s.Pool, bcode, jibun,
 		r.URL.Query().Get("san") == "true", wantGeom(r))
 	s.respondParcel(w, p, err)
+}
+
+// geocodeHandler는 도로명주소 정확 매칭 v0 (Phase 2에서 파서/폴백 확장).
+func (s *Server) geocodeHandler(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if len(q) < 5 {
+		writeErr(w, http.StatusBadRequest, "q (road address) required")
+		return
+	}
+	res, err := geocode.Exact(r.Context(), s.Pool, q)
+	switch {
+	case err == pgx.ErrNoRows:
+		writeErr(w, http.StatusNotFound, "no exact match (v0: full road address required)")
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, "query failed")
+	default:
+		writeJSON(w, http.StatusOK, res)
+	}
+}
+
+// reverseHandler는 좌표 → 최근접 건물 주소 (v0: 반경 200m KNN).
+func (s *Server) reverseHandler(w http.ResponseWriter, r *http.Request) {
+	lon, err1 := strconv.ParseFloat(r.URL.Query().Get("lon"), 64)
+	lat, err2 := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+	if err1 != nil || err2 != nil {
+		writeErr(w, http.StatusBadRequest, "lon, lat required")
+		return
+	}
+	res, err := revgeo.ByPoint(r.Context(), s.Pool, lon, lat, 200)
+	switch {
+	case err == pgx.ErrNoRows:
+		writeErr(w, http.StatusNotFound, "no building within 200m")
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, "query failed")
+	default:
+		writeJSON(w, http.StatusOK, res)
+	}
+}
+
+// placesSearchHandler는 상호명 키워드 검색 (v0: trigram).
+func (s *Server) placesSearchHandler(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if len(q) < 2 {
+		writeErr(w, http.StatusBadRequest, "q required (2+ chars)")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	out, err := places.Search(r.Context(), s.Pool, q, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": len(out), "items": out})
 }
 
 // ---- 실거래가 (MOLIT RTMSDataSvcLandTrade 사실 반환) ----

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/entrance"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/jijeok"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/juso"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landsales"
@@ -33,6 +34,11 @@ func main() {
 	case "sbiz":
 		if err := runSbiz(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "sbiz failed:", err)
+			os.Exit(1)
+		}
+	case "entrance":
+		if err := runEntrance(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "entrance failed:", err)
 			os.Exit(1)
 		}
 	case "jijeok":
@@ -200,5 +206,25 @@ func runLandSales(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("land-sales %s %s: fetched=%d inserted=%d no_emd=%d ambiguous=%d no_geom=%d\n",
 		args[0], args[1], stats.Fetched, stats.Inserted, stats.NoEmd, stats.Ambiguous, stats.NoGeom)
+	return nil
+}
+
+// runEntrance: b2d-etl entrance <zip...> — 출입구 전체분 적재 (buildings).
+func runEntrance(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: b2d-etl entrance <zip...>")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	for _, zp := range args {
+		stats, err := entrance.Load(ctx, pool, zp, "2026-06-08")
+		if err != nil {
+			return fmt.Errorf("%s: %w", zp, err)
+		}
+		fmt.Printf("entrance %s: rows=%d dup=%d skipped=%d\n", zp, stats.Rows, stats.Dup, stats.Skipped)
+	}
 	return nil
 }
