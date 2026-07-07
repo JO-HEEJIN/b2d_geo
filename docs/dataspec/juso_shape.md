@@ -52,3 +52,15 @@ TL_SPBD_ENTRC (rec_len 49):
 ADR_MNG_NO/RN_CD로 결합하는 구조로 보임 — ETL 설계 시 조인 키 검증 필수.
 별도 승인 품목 "출입구 정보"(data/juso_entrance/ 예정)와 TL_SPBD_ENTRC의
 중복 여부는 후자 확보 후 대조.
+
+## 부록: 변동자료 연계서비스(ADS) 스펙 (가이드 PDF + 클라이언트 소스 해부, 2026-07-07)
+
+- 엔드포인트: `GET http://update.juso.go.kr/updateInfo.do?cntc_cd=&app_key=&date_gb=&retry_in=&req_dt=&req_dt2=`
+  (재반영: retryInfo.do). **응답은 body가 아니라 HTTP 헤더** (err_code,
+  approval_yn, total_count, normal_count, retry_count 등) — curl은 `-D -` 필요
+- 자료구분코드(cntc_cd): 100001 도로명주소한글(일) / 200001 출입구정보(일) /
+  200002 기초번호(일) / 300001 건물도형(일) / 300003 도로도형(일) /
+  300006 구역의도형(월) 외 — 전체표는 가이드 PDF (data/ADSClient_DLL.zip 내)
+- 현 보유 키(JUSO_API_KEY)는 ADS 미승인 (실측: err_code E0001, approval_yn N)
+  — ADS는 "변동자료 연계서비스 신청서"로 별도 신청. 전체분 확보 완료 상태라
+  운영 자동화 단계(Phase 6)에서 신청 예정
