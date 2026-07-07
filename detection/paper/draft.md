@@ -1,7 +1,7 @@
 # Fine-tuning Real-time Detection Transformers for Bridge Damage Inspection: A Large-scale Study of Class Imbalance and Cross-domain Augmentation
 
 **Authors:** [PENDING: author list]
-**Draft status:** v0.2 — Cycle-1 and Cycle-2 results complete; YOLO comparator (CUDA re-run) pending. Written in Markdown; LaTeX (ICML template) conversion is a follow-up task.
+**Draft status:** v0.3 — Cycle-1, Cycle-2, and comparator results complete. Remaining: author list, bootstrap CIs, release decision, LaTeX conversion. Written in Markdown; LaTeX (ICML template) conversion is a follow-up task.
 
 ---
 
@@ -147,7 +147,7 @@ Warm-start alone yields 0.127 after one epoch (the re-initialized heads adapt qu
 
 The Spearman rank correlation between per-class box count and AP is ρ = −0.083 (p = 0.83; n = 9 classes) [PENDING: bootstrap CI]; the extreme cells are the rarest class at the top (SteelDefect: 258 boxes, AP 0.361) and the third-largest class at the bottom (Efflorescene: 107,741 boxes, AP 0.054).
 
-**Comparator.** A YOLO11m comparator is training on Apple MPS at submission-draft time (final numbers pending; two earlier attempts diverged post-warmup — validation loss tripling while training loss stayed flat — first attributed to fp16/AMP, then isolated to LR-peak sensitivity at lr₀=0.01 on the MPS backend; the third run with amp off recovered through the LR peak and reached 0.067 mAP by epoch 8 of 10). We report this openly rather than presenting a weak comparator as a strong baseline. [PENDING: final epoch numbers]
+**Comparator.** A COCO-pretrained YOLO11m trained on the same data (512 px, batch 32, 10 epochs, SGD lr₀=0.01 with cosine decay, AMP off) reached **0.0768 mAP@[.50:.95]** (0.152 mAP50) — less than half of DEIMv2-M's 0.161 under a comparable schedule. The gap concentrates in the tail: on SteelDefect the comparator scores 0.030 vs DEIMv2's 0.361, and it trails on every one of the nine classes. Two caveats temper the comparison: the comparator ran on Apple MPS, where two earlier attempts diverged post-warmup (validation loss tripling while training loss stayed flat; first attributed to fp16/AMP, then isolated to LR-peak sensitivity at lr₀=0.01 on that backend — itself a reportable backend-portability finding), so the surviving configuration is the third attempt rather than a tuned baseline; and no per-backend hyperparameter search was performed for either model. We report this openly rather than presenting a weak comparator as a strong baseline.
 
 ### 5.3 Cycle-2 results (rare-class intervention)
 
@@ -184,7 +184,7 @@ Three patterns stand out. (i) The *moderately* oversampled class improved dramat
 - **Rare-class validation noise.** SteelDefect/PaintDamage/Pothole have 38/32/65 val instances; their AP estimates carry wide (unquantified) confidence intervals. [PENDING: bootstrap CIs over val images.]
 - **Single seed, single run per configuration.** Budget precluded seed replication; the Cycle-1 vs Cycle-2 comparison is one draw each.
 - **No factorial ablation.** Cycle 2 changes cross-domain data and oversampling together.
-- **Comparator incomplete.** The YOLO11m MPS baseline recovered on its third configuration and completes after this draft; final numbers pending.
+- **Comparator breadth.** A single comparator (YOLO11m) in a single configuration, on a different backend (MPS) after two diverged attempts; RT-DETR-family and tuned-YOLO baselines are future work.
 - **Same-domain evaluation only.** Val shares the corpus' capture protocol; cross-domain generalization (e.g., to dacl1k-style hand-held imagery) is untested, partly due to license constraints.
 - **Axis-aligned boxes** are a weak fit for elongated diagonal cracks and thin rebar exposure; oriented boxes or masks are a natural extension.
 - **Truncated schedule** (§6c): 0.161 is not a converged figure.

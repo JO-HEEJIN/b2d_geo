@@ -84,8 +84,13 @@ RDD 병합 + 오버샘플링(×20/×40/×50), 1차 best에서 10 epochs fine-tun
 (Spalling +64%, Pothole +28%), 극단 복제 역효과 (SteelDefect −51%,
 PaintDamage −35%), 상세는 paper/draft.md §5.3. 배포 권고: 클래스별 모델 선택.
 
+## 대조군 결과 (2026-07-08)
+
+YOLO11m (MPS, 3차 시도, 10 epochs): **mAP 0.0768** — DEIMv2-M 0.161의 절반 이하.
+희소 클래스 격차 극단 (SteelDefect 0.030 vs 0.361). runs/baseline_y11m_v2/.
+
 ## 다음 작업
 
-1. YOLO11m 대조군 완주 (내일) → 논문 comparator 수치 채우기
+1. ~~YOLO11m 대조군~~ 완료 — 논문 v0.3 반영
 2. 오버샘플링 ablation (×20 단독 등) — 후속 실험 후보
 3. 논문 LaTeX 변환 (ICML 템플릿) — Opus
