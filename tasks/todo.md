@@ -35,6 +35,11 @@
         정보 2건 (신청 2026-07-03, Birth2Death LLC). 다운로드는 juso.go.kr
         로그인 필요 — 사용자 브라우저 작업. 파일 확보 후 레이아웃/EPSG 실측
         확정 진행 (ITRF2000/GRS80까지만 기확인)
+      - 주소정보 제공 API 승인키 확보 (.env JUSO_API_KEY, 커밋 금지).
+        엔드포인트 update.juso.go.kr/updateInfo.do 실존 확인 (HTTP 200).
+        다음: 마이페이지 승인내역에서 자료구분코드(cntc_cd) 확인 → 품목별
+        자동 다운로드 (도형 계열은 date_gb=M). 구역의 도형은 별도 품목 —
+        월별 목록 '데이터 없음'은 변동분 리스트라서였음, 전체분은 승인 제공
 - [>] 1-2. (in progress, juso-spec) 도로명주소 한글 DB 다운로드/파싱 (MS949 -> UTF-8,
       golang.org/x/text 사용, `|` 구분자) -> 검증: 샘플 행 파싱 결과 육안 대조.
       위치정보 DB 부분은 승인 후 진행
