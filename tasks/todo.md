@@ -83,7 +83,10 @@
 
 ## Phase 5 — 부동산 특화 (b2d-data + b2d-engine)
 
-- [ ] 5-1. 연속지적도 shapefile 적재 (nsdi/V-World), PNU 매핑
+- [>] 5-1. 연속지적도 shapefile 적재 (V-World; NSDI는 2024-01 서비스 종료), PNU 매핑
+      - 데이터 확보 완료 (2026-07-07): 17개 시도 전량 12GB, data/연속지적도/
+      - 명세 실측 완료: docs/dataspec/jijeok.md — EPSG:5186 확정(.prj),
+        DBF는 CP949 (.cpg의 UTF-8 표기는 거짓), PNU=A1 19자리, 서울 898,719필지
 - [ ] 5-2. /v1/parcel 3종 엔드포인트 데이터 연결
 - [ ] 5-3. 초성 검색 ("ㅇㄱ" -> "약국") — FR-43 TC 추가 (docs 남은 이슈 해소)
 - [ ] 5-4. Verification phase: 실제 필지 3건 PNU를 정부 서비스와 대조
