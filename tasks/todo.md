@@ -37,8 +37,11 @@
         확정 진행 (ITRF2000/GRS80까지만 기확인)
       - **건물 도형 17개 시도 확보 + 좌표계 실측 확정: EPSG:5179** (2026-07-07,
         docs/dataspec/juso_shape.md — bbox 실측 판별, .prj 미제공). 출입구
-        레이어(TL_SPBD_ENTRC)가 zip에 포함돼 있음. 별도 출입구 품목은
-        data/juso_entrance/ 확보 후 중복 대조
+        레이어(TL_SPBD_ENTRC)가 zip에 포함돼 있음
+      - **출입구 정보 17개 시도 확보** (docs/dataspec/juso_entrance.md):
+        텍스트 DB, 19컬럼/CP949/EPSG:5179, 주소+좌표 결합 — 지오코딩 주력
+        원천. 서울 524,522행 전수 검증. 컬럼 14/15/17 의미는 공식 레이아웃
+        대조 후 확정 (ETL 착수 전 필수)
       - 주소정보 제공 API 승인키 확보 (.env JUSO_API_KEY, 커밋 금지).
         엔드포인트 update.juso.go.kr/updateInfo.do 실존 확인 (HTTP 200).
         다음: 마이페이지 승인내역에서 자료구분코드(cntc_cd) 확인 → 품목별
