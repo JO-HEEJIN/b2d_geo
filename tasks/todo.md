@@ -108,6 +108,10 @@
       연도 파티셔닝, land_features, use_zones, land_sales, land_price_index)
       + api_keys.scopes text[] + GiST 인덱스 -> 검증: 마이그레이션 왕복 성공,
       gitnexus 재인덱싱 (b2d-data, 0.5주)
+- [>] 7-키. API 키 선확보 완료 (2026-07-07, .env 저장·커밋 금지):
+      MOLIT_API_KEY (토지매매 실거래 RTMSDataSvcLandTrade — 활성화 대기 중),
+      REB_API_KEY (R-ONE — 실호출 검증 완료, 월 지역별 지가변동률
+      STATBL_ID=A_2024_00903, 202605 실데이터 확인). JUSO_API_KEY는 Phase 1 참조
 - [ ] 7-1. ETL: 표준지공시지가(전국) + 지가변동률(R-ONE, 월) + 실거래가(월 배치,
       직전 3개월 upsert, 좌표 불가 행은 EMD_CENTROID 등급) -> 검증: 표준지 3필지를
       realtyprice.kr과 대조, 지가변동률 1개 시군구 3개월치 R-ONE 대조, 실거래 5건
