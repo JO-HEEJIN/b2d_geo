@@ -329,3 +329,14 @@ train 박스 108k로 3위 규모인데 AP 0.054 최하위 — 경계가 모호�
 (2) RDD 병합 (Pothole 0.107 보강), (3) 스케줄 연장 (막판 기울기 +2.0/epoch
 남은 채 종료). per-class 평가는 원격 det_solver.val()에 pycocotools
 precision 텐서 슬라이스 8줄을 패치해 test-only로 뽑았다.
+
+### YOLO 대조군 2차 붕괴 — LR 과열로 재진단 (2026-07-07)
+
+amp=False 재시작본도 동일 지점(epoch 3-4)에서 val 붕괴 (mAP 0.060→0.0003,
+val_cls 3.3→6.5). LR 로그 확인 결과 붕괴 시점이 warmup 종료 후 lr0=0.01 도달
+시점과 정확히 일치 — 1차 진단(AMP)은 부분 원인이었고 근본은 MPS+batch32에서
+lr0 0.01 과열. epoch 5에서 cosine 감쇠(0.0066)와 함께 회복 조짐(val_cls 4.9).
+ep7 mAP<0.03이면 MPS 대조군 포기하고 DEIMv2 2차 완료 후 4090에서 YOLO를
+단시간(~4-5h) 학습하는 것으로 대체 예정. 교훈: 같은 recipe라도 백엔드(MPS)가
+바뀌면 안정 LR 범위가 다르다. 붕괴 시점과 스케줄 이벤트(warmup 종료, 증강
+발동)를 겹쳐 보는 것이 진단 지름길.
