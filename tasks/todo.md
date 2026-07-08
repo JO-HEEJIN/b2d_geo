@@ -57,8 +57,9 @@
       (jijeok 5186→4326, entrance 5179→4326, sbiz 4326 원생)
 - [x] 1-5. 인덱스 완료 — GiST(parcels/buildings/places geom), trgm(norm_road/
       norm_jibun/norm_name), btree(norm_road, bcode+jibun) 실존 확인
-- [>] 1-6. Verification: 서울 4건(시청·서울역·국회·경복궁) geocode 실호출로
-      좌표 실위치 일치 확인 (2026-07-08). 하남 1건은 경기 출입구 적재 완료 후
+- [x] 1-6. Verification 완료 (2026-07-09): 서울 4건(시청·서울역·국회·경복궁)
+      + 하남시청(대청로 10) geocode 실호출 — 5건 전부 좌표 실위치 일치.
+      reverse 왕복(하남 신장동)까지 확인
 - [ ] 1-7. learning_log.md Phase 1 기록, gitnexus 재인덱싱
 
 ## Phase 2 — Geocoding / Reverse (b2d-engine 주도)
