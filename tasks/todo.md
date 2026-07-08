@@ -53,17 +53,19 @@
 - [x] 1-3. 상가(상권)정보 CSV(15083033) 적재 완료
       -> 명세: docs/dataspec/sbiz.md (UTF-8/쉼표/39컬럼, 좌표 4326 실측 확정).
       전국 2,725,319행 (17개 시도, skip 0, 소분류 247종 = 명세 일치), 멱등 확인
-- [ ] 1-4. 좌표계 통일: ST_Transform으로 4326 컬럼 생성
-- [ ] 1-5. GiST 인덱스, pg_trgm 인덱스 생성
-- [ ] 1-6. Verification phase: 실제 알고 있는 주소 5건(하남시, 서울 주요 지점)을
-      SQL 직접 조회, 좌표가 실위치와 일치하는지 확인. 카운트만 확인 금지
+- [x] 1-4. 좌표계 통일 완료 — 전 적재 경로가 ST_Transform으로 4326 저장
+      (jijeok 5186→4326, entrance 5179→4326, sbiz 4326 원생)
+- [x] 1-5. 인덱스 완료 — GiST(parcels/buildings/places geom), trgm(norm_road/
+      norm_jibun/norm_name), btree(norm_road, bcode+jibun) 실존 확인
+- [>] 1-6. Verification: 서울 4건(시청·서울역·국회·경복궁) geocode 실호출로
+      좌표 실위치 일치 확인 (2026-07-08). 하남 1건은 경기 출입구 적재 완료 후
 - [ ] 1-7. learning_log.md Phase 1 기록, gitnexus 재인덱싱
 
 ## Phase 2 — Geocoding / Reverse (b2d-engine 주도)
 
-- [ ] 2-1. 한국 주소 파서 상태기계: 시도/시군구/읍면동/도로명/건물번호/지번
-      (구주소, 신주소, 1동/일동 변형, 산 지번, 괄호 병기) -> 검증: 케이스별 단위 테스트
-- [ ] 2-2. 자모 분해/정규화 유틸 (internal/address/jamo.go, normalize.go)
+- [x] 2-1. 주소 파서 상태기계 구현 (internal/address, 설계: docs/design/
+      address_parser.md) — 단위테스트 15종 통과. geocode 연결은 후속
+- [>] 2-2. 자모 분해/초성 추출 완료 (jamo.go, 테스트 포함). normalize.go 잔여
 - [ ] 2-3. 3단 폴백 매칭(정확 -> 정규화 -> trigram) + score 산정
 - [ ] 2-4. reverse: 법정동 폴리곤 ST_Contains + 건물 KNN (`<->`)
 - [ ] 2-5. Verification phase: 실주소 200건 이상 테스트 셋으로 정확도 측정,
