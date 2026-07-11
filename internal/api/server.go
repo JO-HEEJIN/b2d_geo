@@ -19,7 +19,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/JO-HEEJIN/b2d_geo/internal/auth"
 	"github.com/JO-HEEJIN/b2d_geo/internal/geocode"
+	"github.com/JO-HEEJIN/b2d_geo/internal/meter"
 	"github.com/JO-HEEJIN/b2d_geo/internal/places"
 	"github.com/JO-HEEJIN/b2d_geo/internal/revgeo"
 	"github.com/JO-HEEJIN/b2d_geo/internal/parcel"
@@ -47,7 +49,14 @@ func New(pool *pgxpool.Pool, molitKey, rebKey string) http.Handler {
 	mux.HandleFunc("GET /v1/parcel/{pnu}", s.parcelByPNU)
 	mux.HandleFunc("GET /v1/appraisal/sales", s.appraisalSales)
 	mux.HandleFunc("GET /v1/appraisal/price-index", s.appraisalPriceIndex)
-	return mux
+
+	// Phase 4 미들웨어 체인: IP rate limit → auth → key rate limit → meter
+	// → handler. IP 제한이 최외곽이라 미인증 플러드도 막는다 (QA MED-1).
+	// (/v1/health는 auth·rate limit 미들웨어 내부에서 제외한다.)
+	authr := auth.NewAuthenticator(pool)
+	limiter := auth.NewRateLimiter()
+	m := meter.New(pool)
+	return limiter.IPMiddleware(authr.Middleware(limiter.Middleware(m.Middleware(mux))))
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -120,10 +129,16 @@ func (s *Server) geocodeHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "q (road address) required")
 		return
 	}
-	res, err := geocode.Exact(r.Context(), s.Pool, q)
+	res, err := geocode.Search(r.Context(), s.Pool, q)
 	switch {
+	case err == geocode.ErrAmbiguous:
+		// point 필드 제외: 후보 미확정 상태에 [0,0] 좌표를 내보내지 않는다
+		// (환각 좌표 금지 — QA MED-2)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"match": "ambiguous", "candidates": res.Candidates, "warnings": res.Warnings,
+		})
 	case err == pgx.ErrNoRows:
-		writeErr(w, http.StatusNotFound, "no exact match (v0: full road address required)")
+		writeErr(w, http.StatusNotFound, "no match")
 	case err != nil:
 		writeErr(w, http.StatusInternalServerError, "query failed")
 	default:

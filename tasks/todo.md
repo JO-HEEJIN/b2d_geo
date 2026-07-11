@@ -66,27 +66,32 @@
 
 - [x] 2-1. 주소 파서 상태기계 구현 (internal/address, 설계: docs/design/
       address_parser.md) — 단위테스트 15종 통과. geocode 연결은 후속
-- [>] 2-2. 자모 분해/초성 추출 완료 (jamo.go, 테스트 포함). normalize.go 잔여
-- [ ] 2-3. 3단 폴백 매칭(정확 -> 정규화 -> trigram) + score 산정
+- [x] 2-2. 자모/초성 유틸 완료. 정규화는 파서 canonSido+RoadKey로 흡수
+- [x] 2-3. 3단 폴백 완료 (2026-07-12): exact/exact_partial(시도생략 후보검출)/
+      jibun(admin_areas→parcels 경로)/trigram(set_limit 0.55 — 112s→4s 실측).
+      score=similarity 원값 노출
 - [ ] 2-4. reverse: 법정동 폴리곤 ST_Contains + 건물 KNN (`<->`)
-- [ ] 2-5. Verification phase: 실주소 200건 이상 테스트 셋으로 정확도 측정,
-      실패 케이스와 원인을 learning_log에 기록 (docs TestCases 기대값 실측 기입)
+- [x] 2-5. 정확도 측정 완료: 실주소 200건×4변형 = 800질의 **100.0%**
+      (초기 14% → 읍면 RoadKey·붙임토큰 결함 수정 후). learning_log 기록
 - [ ] 2-6. learning_log.md Phase 2 기록, gitnexus 재인덱싱
 
 ## Phase 3 — Places / Keyword (b2d-engine)
 
-- [ ] 3-1. 자모 분해 정규화 기반 trgm 검색, 반경/카테고리 필터
+- [>] 3-1. 초성 검색 완료 (choseong 컬럼 272만 백필 + trgm, 'ㅇㄴㄹㅇㄱ'→온누리약국
+      0.2s). 일반 검색 3단 UNION으로 10s→0.16s. 반경/카테고리 필터 잔여
 - [ ] 3-2. Verification phase: 실존 상호 20건 검색 재현율 확인
 - [ ] 3-3. learning_log.md Phase 3 기록, gitnexus 재인덱싱
 
 ## Phase 4 — API 서버 (b2d-api)
 
-- [ ] 4-1. 6절 사양 전체: /v1/geocode(+batch 10,000건), /v1/reverse,
-      /v1/places/search, /v1/places/category, /v1/parcel 3종, /v1/health, /v1/usage
-- [ ] 4-2. 미들웨어 체인: API key 검증(SHA-256 저장) -> rate limit(token bucket,
-      key별+IP별) -> 사용량 계측(채널 + 배치 insert, 논블로킹)
-- [ ] 4-3. API key 발급 CLI
-- [ ] 4-4. OpenAPI 3.1 스펙 파일
+- [>] 4-1. 9종 가동 (geocode/reverse/places/parcel×3/appraisal×2/health).
+      잔여: geocode batch, places/category, /v1/usage
+- [x] 4-2. 미들웨어 체인 완료 (2026-07-12): auth(SHA-256+scope)→ratelimit(token
+      bucket key+IP)→meter(채널+CopyFrom 배치). 실검증 401/403/429/계측 5종 통과.
+      알려진 이슈(Phase 6 감사 대상): auth 캐시 30s revoke 지연, 무인증 요청
+      IP-rate 미적용(DB 조회 1회씩), 버킷 맵 무한 성장, meter kill 시 flush 유실
+- [x] 4-3. `b2d-etl apikey create` 완료 (평문 1회 출력, 해시 저장 검증)
+- [x] 4-4. openapi.yaml 완료 (9 엔드포인트 + 인증 스킴, 실응답 구조 반영)
 - [ ] 4-5. Verification phase: curl 전 엔드포인트 실호출 + 부하 테스트, p95 latency 기록
 - [ ] 4-6. 보안 체크리스트(10절) 1차 점검 (b2d-qa)
 - [ ] 4-7. learning_log.md Phase 4 기록, gitnexus 재인덱싱

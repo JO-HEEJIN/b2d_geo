@@ -46,7 +46,7 @@ func Parse(input string) Parsed {
 	}
 	s = strings.NewReplacer(",", " ", ".", " ").Replace(s)
 
-	toks := strings.Fields(s)
+	toks := splitGlued(strings.Fields(s))
 	i := 0
 
 	// SIDO
@@ -151,6 +151,23 @@ func Parse(input string) Parsed {
 	return p
 }
 
+// gluedRe: 도로명에 건물번호가 붙은 토큰 ("시덕로249", "고덕로1길12-3").
+// greedy 프리픽스가 "고덕로1길" 같은 숫자 포함 도로명을 보존한다.
+var gluedRe = regexp.MustCompile(`^(.+(?:로|길))(\d+(?:-\d+)?)$`)
+
+// splitGlued는 붙은 도로명+번호 토큰을 두 토큰으로 나눈다.
+func splitGlued(toks []string) []string {
+	out := make([]string, 0, len(toks)+2)
+	for _, t := range toks {
+		if m := gluedRe.FindStringSubmatch(t); m != nil {
+			out = append(out, m[1], m[2])
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 // adminDongRe: "성수1동"류 — 숫자+동 (행정동 표기 관례).
 var adminDongRe = regexp.MustCompile(`\d+동$`)
 
@@ -188,6 +205,10 @@ func (p Parsed) RoadKey() (string, bool) {
 	}
 	if p.Sigungu != "" {
 		parts = append(parts, p.Sigungu)
+	}
+	// 군 지역 도로명주소는 읍·면이 정식 구성요소다 ("완도군 완도읍 회룡길 64")
+	if p.Emd != "" && hasAnySuffix(p.Emd, "읍", "면") {
+		parts = append(parts, p.Emd)
 	}
 	parts = append(parts, p.Road)
 	if p.Under {

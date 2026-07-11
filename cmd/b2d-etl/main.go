@@ -4,11 +4,14 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/JO-HEEJIN/b2d_geo/internal/auth"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/entrance"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/jijeok"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/juso"
@@ -20,11 +23,16 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
 	switch os.Args[1] {
+	case "apikey":
+		if err := runApikey(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "apikey failed:", err)
+			os.Exit(1)
+		}
 	case "migrate":
 		if err := runMigrate(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, "migrate failed:", err)
@@ -36,6 +44,19 @@ func main() {
 			fmt.Fprintln(os.Stderr, "sbiz failed:", err)
 			os.Exit(1)
 		}
+	case "places-choseong":
+		pool, err := pgxpool.New(context.Background(), dbDSN())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		n, err := sbiz.BackfillChoseong(context.Background(), pool)
+		pool.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "places-choseong failed:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("places-choseong: %d rows filled\n", n)
 	case "entrance":
 		if err := runEntrance(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "entrance failed:", err)
@@ -226,5 +247,44 @@ func runEntrance(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("entrance %s: rows=%d dup=%d skipped=%d\n", zp, stats.Rows, stats.Dup, stats.Skipped)
 	}
+	return nil
+}
+
+// runApikey: b2d-etl apikey create --name <이름> [--scopes geo,realestate] [--rate <rps>]
+// 평문 키를 1회만 출력하고 DB에는 SHA-256 해시만 저장한다.
+func runApikey(ctx context.Context, args []string) error {
+	if len(args) < 1 || args[0] != "create" {
+		return fmt.Errorf("usage: b2d-etl apikey create --name <name> [--scopes geo,realestate] [--rate <rps>]")
+	}
+	fs := flag.NewFlagSet("apikey create", flag.ContinueOnError)
+	name := fs.String("name", "", "owner name (required)")
+	scopesCSV := fs.String("scopes", "geo", "comma-separated scopes: geo,realestate")
+	rate := fs.Int("rate", 10, "rate limit requests per second (>0)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *name == "" {
+		return fmt.Errorf("--name required")
+	}
+	if *rate <= 0 {
+		return fmt.Errorf("--rate must be positive")
+	}
+	scopes, err := auth.ParseScopes(*scopesCSV)
+	if err != nil {
+		return err
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	id, plaintext, prefix, err := auth.CreateAPIKey(ctx, pool, *name, scopes, *rate)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("api key created: id=%d prefix=%s scopes=%s rate_limit_rps=%d\n",
+		id, prefix, strings.Join(scopes, ","), *rate)
+	fmt.Println("PLAINTEXT KEY (shown once, store securely):")
+	fmt.Println("  " + plaintext)
 	return nil
 }
