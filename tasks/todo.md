@@ -60,7 +60,8 @@
 - [x] 1-6. Verification 완료 (2026-07-09): 서울 4건(시청·서울역·국회·경복궁)
       + 하남시청(대청로 10) geocode 실호출 — 5건 전부 좌표 실위치 일치.
       reverse 왕복(하남 신장동)까지 확인
-- [ ] 1-7. learning_log.md Phase 1 기록, gitnexus 재인덱싱
+- [x] 1-7. 완료 확인 (2026-07-18): learning_log 372행 Phase 1-6 기록 실존,
+      재인덱싱 최신
 
 ## Phase 2 — Geocoding / Reverse (b2d-engine 주도)
 
@@ -73,14 +74,14 @@
 - [ ] 2-4. reverse: 법정동 폴리곤 ST_Contains + 건물 KNN (`<->`)
 - [x] 2-5. 정확도 측정 완료: 실주소 200건×4변형 = 800질의 **100.0%**
       (초기 14% → 읍면 RoadKey·붙임토큰 결함 수정 후). learning_log 기록
-- [ ] 2-6. learning_log.md Phase 2 기록, gitnexus 재인덱싱
+- [x] 2-6. 완료 확인 (2026-07-18): learning_log 379행~ Phase 2·3·4 기록 실존
 
 ## Phase 3 — Places / Keyword (b2d-engine)
 
 - [>] 3-1. 초성 검색 완료 (choseong 컬럼 272만 백필 + trgm, 'ㅇㄴㄹㅇㄱ'→온누리약국
       0.2s). 일반 검색 3단 UNION으로 10s→0.16s. 반경/카테고리 필터 잔여
 - [ ] 3-2. Verification phase: 실존 상호 20건 검색 재현율 확인
-- [ ] 3-3. learning_log.md Phase 3 기록, gitnexus 재인덱싱
+- [x] 3-3. 완료 확인 (2026-07-18): 위와 동일 섹션에 포함
 
 ## Phase 4 — API 서버 (b2d-api)
 
@@ -92,9 +93,24 @@
       IP-rate 미적용(DB 조회 1회씩), 버킷 맵 무한 성장, meter kill 시 flush 유실
 - [x] 4-3. `b2d-etl apikey create` 완료 (평문 1회 출력, 해시 저장 검증)
 - [x] 4-4. openapi.yaml 완료 (9 엔드포인트 + 인증 스킴, 실응답 구조 반영)
-- [ ] 4-5. Verification phase: curl 전 엔드포인트 실호출 + 부하 테스트, p95 latency 기록
-- [ ] 4-6. 보안 체크리스트(10절) 1차 점검 (b2d-qa)
-- [ ] 4-7. learning_log.md Phase 4 기록, gitnexus 재인덱싱
+- [x] 4-5. Verification phase 완료 (2026-07-18): 9/9 엔드포인트 200 (시청
+      필지 geocode↔reverse↔parcel 삼각 일치), 인증 음성 401×2. 부하:
+      IP리미터(20rps 하드코딩)가 동시 20에서 정확 발동(429) — p95는
+      한도 내 유속(14rps, n=150/엔드포인트)으로 측정: geocode-road 11ms /
+      jibun 26 / reverse 67 (p99 399 이상치) / places 30 / 초성 56 /
+      parcel-point 11 / pnu 7. 발견: ① 로그 redact 함수 문자 단위 ***
+      도배 (Phase 6 감사 추가) ② appraisal 2종 .env 키 필수 (미설정 502)
+- [x] 4-6. 완료 (2026-07-18, b2d-qa): SQL 바인딩 전수 OK($N, 조립 0건) /
+      키 SHA-256 해시저장 OK / XFF 스푸핑 우회 불가(RemoteAddr만) / 에러응답
+      제네릭 OK / .env·커밋이력 시크릿 0건. 결함 5건 → 6-1 수정 대상:
+      ① redact 빈키 문자도배 server.go:277 (트리거 정정: .env 미소싱 기동,
+      실파일은 키 존재) [MED] ② 버킷맵 무한성장, evict 없음 [MED]
+      ③ auth 캐시 30s revoke 지연 (설계) [LOW-MED] ④ meter graceful
+      shutdown 부재, kill 시 flush 유실 [LOW] ⑤ govulncheck GO-2026-5856
+      crypto/tls — go 1.26.5 범프 필요 [MED]. MED-1(무인증 IP-rate)은
+      해소 확인
+- [x] 4-7. 완료 (2026-07-18): learning_log Phase 4 완결 기록, gitnexus
+      재인덱싱 (1,263노드/2,086엣지/63플로우)
 
 ## Phase 5 — 부동산 특화 (b2d-data + b2d-engine)
 
@@ -102,8 +118,11 @@
       - 데이터 확보 완료 (2026-07-07): 17개 시도 전량 12GB, data/연속지적도/
       - 명세 실측 완료: docs/dataspec/jijeok.md — EPSG:5186 확정(.prj),
         DBF는 CP949 (.cpg의 UTF-8 표기는 거짓), PNU=A1 19자리, 서울 898,719필지
-- [ ] 5-2. /v1/parcel 3종 엔드포인트 데이터 연결
-- [ ] 5-3. 초성 검색 ("ㅇㄱ" -> "약국") — FR-43 TC 추가 (docs 남은 이슈 해소)
+- [x] 5-2. 완료 확인 (2026-07-18): 3종 모두 실데이터 반환 검증 (4-5에서
+      by-point/by-jibun/{pnu} 삼각 일치, PNU 1114010300100310000). 단 8개 도는
+      5-1 잘림(1M) 범위 내에서만 조회 가능 — 5-1 완료 시 자동 확장
+- [x] 5-3. 완료 (2026-07-18): TC-E13 신설 (05_TestCases + 추적 매트릭스),
+      docs/todo.md 남은 이슈 해소. 실측 근거: ㅇㄴㄹㅇㄱ→온누리약국 200, p95 56ms
 - [ ] 5-4. Verification phase: 실제 필지 3건 PNU를 정부 서비스와 대조
 - [ ] 5-5. learning_log.md Phase 5 기록, gitnexus 재인덱싱
 

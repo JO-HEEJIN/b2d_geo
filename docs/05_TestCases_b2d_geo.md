@@ -60,6 +60,7 @@ DB 불필요. Store interface 미사용. 순수 함수 검증.
 | TC-E10 | FR-50 | 실존 PNU 1건 | 속성 + GeoJSON 폴리곤. 정부 서비스(예: 토지이음) 화면과 지목/면적 대조 일치 |
 | TC-E11 | FR-51 | 주소 → PNU | 반환 PNU가 TC-E10과 동일 필지 |
 | TC-E12 | FR-52 | 필지 내부 좌표 | 해당 PNU 반환. 필지 경계선 위 좌표는 단일 필지 결정 규칙 문서화 확인 |
+| TC-E13 | FR-43 | 초성 query="ㅇㄴㄹㅇㄱ" limit=5 | "온누리약국"이 결과 포함, 응답 1s 미만 (실측 2026-07-18: 200, p95 56ms) |
 
 ## 4. E2E / API 테스트
 
@@ -104,7 +105,7 @@ DB 불필요. Store interface 미사용. 순수 함수 검증.
 | FR-10~12 (파서) | TC-U01~U11 |
 | FR-20~24 (geocode) | TC-E01~E04, TC-A04~A05, TC-N01~N02 |
 | FR-30~32 (reverse) | TC-E05~E06, TC-N03 |
-| FR-40~43 (places) | TC-E07~E09 |
+| FR-40~43 (places) | TC-E07~E09, TC-E13 |
 | FR-50~52 (parcel) | TC-E10~E12 |
 | FR-60~66 (인증/계측) | TC-A01~A08, TC-S02, TC-S07 |
 | NFR-01~10 | TC-N01~N05, TC-S01, TC-S03, TC-S05 |
@@ -114,7 +115,7 @@ DB 불필요. Store interface 미사용. 순수 함수 검증.
 | BR-05 | TC-E10~E12 |
 | BR-06 | TC-A06 |
 
-미커버: FR-43(초성 검색, 선택)은 Phase 5 구현 확정 시 TC 추가. BR-07/BR-08은
+미커버: (FR-43은 TC-E13으로 커버, 2026-07-18.) BR-07/BR-08은
 프로세스 요구사항으로 TC가 아닌 감사 항목(go.mod 검사는 TC-N05로 부분 커버).
 
 ---

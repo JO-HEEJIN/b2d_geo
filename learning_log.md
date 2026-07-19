@@ -400,3 +400,90 @@ bucket key+IP)/meter(논블로킹 CopyFrom)/키 CLI/openapi.yaml — 401·403·4
 **포트 유령**: 하니스 9.5% 미스터리의 진범은 코드가 아니라 "bind: address
 already in use" — 구버전 서버가 계속 응답 중이었다. 재기동 검증은 반드시
 pgrep으로 PID까지 확인할 것.
+
+## paper_4 트랙 (2026-07-12 ~ 07-16): car-wash 재현 + activation oracle
+
+상세 전과정은 `/Users/momo/interview_mate/car_wash/paper_4/STATE_stage1.md`
+(게이트별 기록, 커밋 ed2f1f7~). 여기엔 교훈만.
+
+**STAGE 1 (완료)**: Qwen3-8B에서 answer-before-reasoning 재현 확정 —
+walk 오답 커밋 85~100%/조건, thinking 모드로도 안 고쳐짐 (~5%p 구제).
+210 롤아웃, LLM-judge 채점, 수동 게이트 20/20.
+
+- **채점기 과적합 루프의 정석 코스를 밟았다**: 정규식 스코어러를 자체
+  32케이스에 맞춰 수정(6종) → 신규 4렌즈 홀드아웃에서 62.5% 불일치 →
+  사전 임계(>15%) 규칙대로 기각 → LLM-judge 전환 → judge는 미튜닝
+  합성 64케이스에서 96.9%로 게이트 통과 후 채택. 교훈: 홀드아웃과
+  go/no-go 임계를 **수정 전에** 못박아야 미련 없이 버린다.
+- **절단 아티팩트가 결론을 뒤집을 뻔했다**: thinking-on의 "완화 효과"는
+  max_new_tokens=1024가 think 중간을 자른 산물. 4096 재생성 후 소멸.
+  null 라벨 32건 전수 원문 확인이 잡았다 — 집계만 봤으면 "thinking이
+  현상을 고친다"고 논문에 쓸 뻔.
+- **하네스 bg 태스크 ~10분 kill**: 이 세션 환경에서 장수 백그라운드
+  태스크가 순수 sleep 루프여도 죽는다. GPU 장기작업은 nohup+disown 분리
+  + ScheduleWakeup 순찰이 정답. resume(완료 키 스킵) 내장 필수.
+
+**STAGE 2 (진행)**: 공개 AO(Karvonen) oracle LoRA를 로컬 MPS로 —
+bitsandbytes 없이 bf16, Colab 불필요.
+
+- **양성통제 먼저, 위치 곡선은 그 다음**: 커밋 텍스트가 보이는 위치(P5)
+  조차 못 읽으면 커밋 전 신호는 전부 노이즈. 실제로 1차 P2 50% "신호"는
+  P5 3/16과 함께 무너졌다.
+- **oracle은 질문 문구에 극도로 민감**: "What answer is this model going
+  to give?" 2/16 → "Is the model going to say walk or drive?" 11/16.
+  개방형은 LatentQA 분포 밖, 폐쇄형(선택지 명시)이 판독됨.
+- **중립 통제 판정 (B)**: oracle 고유 walk율 17% (기본값 drive 83%) —
+  walk 편향 우려 정반대. walk 판독만 정보적이란 비대칭 하에서 커밋 전
+  walk 판독 15/22=68% vs 기준선 17%. drive 최종답 롤아웃조차 커밋 전엔
+  walk-lean 5/6 — STAGE 1 행동 서사("기본 walk, thinking이 늦게 전복")의
+  내부 대응물. 교훈: 편향 통제는 결과를 죽이기도 살리기도 한다 — 안
+  돌렸으면 drive군 walk 판독을 편향으로 오독하고 버렸을 것.
+- STAGE 2 프로빙 종료 (사전 스코프 선). 커밋 ed2f1f7(STAGE 1),
+  d5b3e49(STAGE 2), 브랜치 docs/car-wash-repro.
+
+**발행 전 감사 (07-16)**: 사용자의 "이 세팅 어디서 왔지?" 싸한 느낌 →
+3렌즈 워크플로 감사 → 18건 확정 (블로커 2: 풀링 Fisher pseudoreplication,
+§2.3 수치 오류; regex가 "driveway" 매치하는 오염도 발견). 교훈 셋:
+① 층화/집계 통계는 클러스터 구조부터 — 110프로브가 22롤아웃이면 n은 22다.
+② 어휘 매칭 regex는 경계 엄밀히 — \w* 하나가 통제 변수를 오염시킨다.
+③ "근거 없는 선택값" 전수 훑기는 발행 전 필수 — 세팅이 옳아도 근거가
+안 써 있으면 리뷰어에겐 임의값. 다행: 프로브 verdict 0/132 변화,
+drive군 결론은 클러스터 보정 후에도 생존 (6/6, p=.002).
+
+### Phase 4 완결 — 검증·감사 (2026-07-18)
+
+4-5 실검증: 9/9 엔드포인트 200, 시청 필지 geocode↔reverse↔parcel 삼각
+일치. p95(실사용 유속 14rps): geocode 11/26ms, reverse 67, places 30,
+초성 56, parcel 7~11. 동시 20에선 IP리미터(20rps)가 정확히 429 —
+부하테스트가 리미터 검증이 된 사례.
+
+4-6 감사(b2d-qa): SQL 바인딩·키 해시·XFF 우회·에러 노출·시크릿 이력
+전부 OK. 결함 5건은 6-1로: redact 빈키 문자도배(ReplaceAll("", …)의
+Go 시맨틱 — 빈 패턴은 모든 문자 사이 삽입), 버킷맵 무한성장, auth
+30s revoke 지연, meter graceful shutdown 부재, GO-2026-5856(go 1.26.5).
+
+교훈 둘. ① 부하테스트에서 429 폭주는 실패가 아니라 방어 작동의 증거 —
+단 백엔드 p95는 한도 아래 유속에서 따로 재야 한다. ② redact 도배의
+표면 증상("문자마다 ***")에서 ReplaceAll 빈 패턴을 즉시 의심할 것 —
+Go의 빈 문자열 매칭 시맨틱은 함정이다. 트리거는 코드가 아니라 기동
+절차(.env 미소싱)였다 — 기동 스크립트에 source 명시로 이중 방어.
+
+**paper_4 v2 재배치 (07-18)**: 제출 직후 pre-CoT probing 클러스터 5편
+발견 (supervised probe로 >0.9 AUC + causal steering — 우리보다 강한
+방법으로 "답의 사전 인코딩" 확립). 논문이 산 이유 = 애초에 우선권
+주장을 안 하고 preliminary + 행동 기둥으로 스코핑해둔 것. 재배치 축:
+"supervised probe는 되고(그들) 무훈련 oracle은 대체로 안 되는데(Karvonen)
+질문만 맞으면 예비 신호가 난다(우리)" 삼각형. 교훈: **인용 검증(가진 것
+확인)과 prior-art sweep(놓친 것 탐색)은 다른 게이트다** — 후자 없이
+제출했다 뚫렸다. 영구 체크리스트에 추가.
+
+### Phase 6-1 보안 수정 배치 (2026-07-19)
+
+생성(fix-61)/검증(qa-46) 분리로 4건: ① redact 빈키 가드 (ReplaceAll
+빈 패턴 도배 차단) ② rate limit 버킷 reaper (30분 TTL, 10분 주기,
+시간주입식이라 테스트 결정적) ③ go 1.26.5 toolchain + govulncheck CI
+스텝 (GO-2026-5856 해소, No vulnerabilities) ④ meter graceful shutdown
+(done chan 드레인; 순서가 핵심 — srv.Shutdown으로 핸들러 먼저 멈추고
+채널을 닫아야 send-on-closed 패닉이 없다. 통합검증: 5이벤트 Close 후
+usage_log SUM=5, 유실 0, Close 14ms<1s로 드레인 경로임을 증명).
+잔존: auth 캐시 30s revoke 지연 (설계 항목, 의도적 미착수).
