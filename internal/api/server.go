@@ -35,8 +35,9 @@ type Server struct {
 	Client   *http.Client
 }
 
-// New는 라우팅이 구성된 http.Handler를 돌려준다.
-func New(pool *pgxpool.Pool, molitKey, rebKey string) http.Handler {
+// New는 라우팅이 구성된 http.Handler와, 종료 시 계측기를 드레인하는
+// close 함수를 돌려준다.
+func New(pool *pgxpool.Pool, molitKey, rebKey string) (http.Handler, func()) {
 	s := &Server{Pool: pool, MolitKey: molitKey, RebKey: rebKey,
 		Client: &http.Client{Timeout: 15 * time.Second}}
 	mux := http.NewServeMux()
@@ -56,7 +57,8 @@ func New(pool *pgxpool.Pool, molitKey, rebKey string) http.Handler {
 	authr := auth.NewAuthenticator(pool)
 	limiter := auth.NewRateLimiter()
 	m := meter.New(pool)
-	return limiter.IPMiddleware(authr.Middleware(limiter.Middleware(m.Middleware(mux))))
+	h := limiter.IPMiddleware(authr.Middleware(limiter.Middleware(m.Middleware(mux))))
+	return h, m.Close
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -274,6 +276,9 @@ func allDigits(s string) bool {
 // redactKey는 에러 문자열에서 API 키(원문/URL인코딩)를 가린다.
 func redactKey(err error, key string) string {
 	msg := err.Error()
+	if key == "" {
+		return msg // 빈 키면 ReplaceAll이 모든 문자 사이에 삽입되므로 원문 반환
+	}
 	msg = strings.ReplaceAll(msg, key, "***")
 	msg = strings.ReplaceAll(msg, url.QueryEscape(key), "***")
 	return msg

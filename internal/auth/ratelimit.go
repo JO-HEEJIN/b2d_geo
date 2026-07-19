@@ -16,6 +16,9 @@ const (
 	ipRatePerSec = 20.0 // IP별 기본 처리율(req/s)
 	ipBurst      = 40.0 // IP별 버스트 상한(= 2 x rate)
 	keyBurstMul  = 2.0  // per-key burst = rate_limit_rps x 2
+
+	bucketIdleTTL = 30 * time.Minute // 이 시간 이상 미사용 버킷은 청소 대상
+	reapInterval  = 10 * time.Minute // 청소 주기
 )
 
 // tokenBucket은 단일 주체(키 또는 IP)의 토큰 버킷 상태다.
@@ -30,7 +33,33 @@ type limiter struct {
 	buckets map[string]*tokenBucket
 }
 
-func newLimiter() *limiter { return &limiter{buckets: map[string]*tokenBucket{}} }
+func newLimiter() *limiter {
+	l := &limiter{buckets: map[string]*tokenBucket{}}
+	go l.reapLoop()
+	return l
+}
+
+// reapLoop는 주기적으로 오래 미사용된 버킷을 제거해 맵 무한 성장을 막는다.
+// 프로세스 수명 동안 상주한다(서버당 limiter 2개).
+func (l *limiter) reapLoop() {
+	t := time.NewTicker(reapInterval)
+	defer t.Stop()
+	for now := range t.C {
+		l.reap(now)
+	}
+}
+
+// reap은 now 기준 bucketIdleTTL 넘게 미사용된 버킷을 삭제한다. now를 인자로
+// 받아 테스트에서 시간을 주입할 수 있게 한다.
+func (l *limiter) reap(now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for k, b := range l.buckets {
+		if now.Sub(b.last) > bucketIdleTTL {
+			delete(l.buckets, k)
+		}
+	}
+}
 
 // allow는 key에 대해 토큰 1개 소비를 시도한다. 실패 시 재시도까지의 대기시간을 돌려준다.
 // now를 인자로 받아 테스트에서 시간을 주입할 수 있게 한다.

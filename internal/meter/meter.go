@@ -39,14 +39,23 @@ type aggKey struct {
 type Meter struct {
 	pool    *pgxpool.Pool
 	ch      chan event
-	dropped atomic.Int64 // 채널 포화로 버린 이벤트 수(관측용)
+	dropped atomic.Int64  // 채널 포화로 버린 이벤트 수(관측용)
+	done    chan struct{} // run goroutine 종료 신호
 }
 
 // New는 계측기를 만들고 flush goroutine을 시작한다.
 func New(pool *pgxpool.Pool) *Meter {
-	m := &Meter{pool: pool, ch: make(chan event, meterBuffer)}
+	m := &Meter{pool: pool, ch: make(chan event, meterBuffer), done: make(chan struct{})}
 	go m.run()
 	return m
+}
+
+// Close는 이벤트 채널을 닫아 잔여 이벤트를 마지막으로 적재하고 run goroutine이
+// 끝날 때까지 기다린다. 호출 전에 HTTP 서버를 먼저 Shutdown 해 Middleware의
+// 채널 송신이 끝나야 한다(닫힌 채널 송신 panic 방지).
+func (m *Meter) Close() {
+	close(m.ch)
+	<-m.done
 }
 
 // Middleware는 인증된 요청을 논블로킹으로 계측한다. 인증 미들웨어 뒤에 배선한다.
@@ -66,6 +75,7 @@ func (m *Meter) Middleware(next http.Handler) http.Handler {
 
 // run은 flushMaxItems 또는 flushInterval 조건으로 usage_log에 배치 적재한다.
 func (m *Meter) run() {
+	defer close(m.done)
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 	agg := map[aggKey]int{}
@@ -80,7 +90,11 @@ func (m *Meter) run() {
 	}
 	for {
 		select {
-		case e := <-m.ch:
+		case e, ok := <-m.ch:
+			if !ok {
+				flush() // 채널이 닫혔고 버퍼도 비었다: 잔여 flush 후 종료
+				return
+			}
 			agg[aggKey{keyID: e.keyID, endpoint: e.endpoint, bucket: e.ts.Truncate(time.Minute)}]++
 			n++
 			if n >= flushMaxItems {

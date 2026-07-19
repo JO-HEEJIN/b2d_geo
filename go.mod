@@ -2,6 +2,8 @@ module github.com/JO-HEEJIN/b2d_geo
 
 go 1.26.4
 
+toolchain go1.26.5
+
 require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jonas-p/go-shp v0.1.1
