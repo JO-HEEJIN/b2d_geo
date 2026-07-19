@@ -128,8 +128,11 @@
 
 ## Phase 6 — 상용화 준비 (전 팀)
 
-- [ ] 6-1. b2d-qa 보안 감사: SQL 바인딩 전수, key 해시, rate limit 우회,
-      에러 메시지 내부정보 누출, govulncheck CI 통합
+- [x] 6-1. 완료 (2026-07-19): 감사(qa-46) → 수정(fix-61) → 재검증(qa-46)
+      → 커밋 f94513c. SQL 바인딩·key 해시·rate limit 우회·에러 누출 전수
+      OK, redact 가드·버킷 reaper·go1.26.5·meter graceful shutdown 반영,
+      govulncheck CI 통합 (No vulnerabilities). 잔존: auth 캐시 30s revoke
+      지연 (설계 항목 — 상용 전 결정 필요, 6-3 요금제 설계와 함께)
 - [ ] 6-2. 카카오 로컬 API 대비 정확도 샘플 비교 (수동 100건) -> 판매 근거 수치
 - [ ] 6-3. 배포 문서, 요금제 설계 초안 (벌크/온프레미스/부동산 필드 3축,
       docs BRD 공란 확정)
