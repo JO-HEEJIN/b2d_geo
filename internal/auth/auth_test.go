@@ -96,6 +96,29 @@ func TestExtractKey(t *testing.T) {
 	}
 }
 
+func TestCacheTTLFromEnv(t *testing.T) {
+	t.Setenv("B2D_AUTH_CACHE_TTL", "") // 미설정 → 기본값
+	if got := cacheTTLFromEnv(); got != cacheTTL {
+		t.Errorf("unset should default to %v: got %v", cacheTTL, got)
+	}
+	t.Setenv("B2D_AUTH_CACHE_TTL", "5s")
+	if got := cacheTTLFromEnv(); got != 5*time.Second {
+		t.Errorf("5s: got %v", got)
+	}
+	t.Setenv("B2D_AUTH_CACHE_TTL", "0s") // 온프레미스: 캐시 무효, revoke 즉시
+	if got := cacheTTLFromEnv(); got != 0 {
+		t.Errorf("0s: got %v", got)
+	}
+	t.Setenv("B2D_AUTH_CACHE_TTL", "garbage") // 파싱실패 → 폴백
+	if got := cacheTTLFromEnv(); got != cacheTTL {
+		t.Errorf("garbage should fall back: got %v", got)
+	}
+	t.Setenv("B2D_AUTH_CACHE_TTL", "-5s") // 음수 → 폴백
+	if got := cacheTTLFromEnv(); got != cacheTTL {
+		t.Errorf("negative should fall back: got %v", got)
+	}
+}
+
 func TestTokenBucketBurstThenDeny(t *testing.T) {
 	l := newLimiter()
 	now := time.Now()

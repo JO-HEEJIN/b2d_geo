@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +21,9 @@ const (
 	ctxKeyRateRPS
 )
 
-// cacheTTL은 검증된 키 조회 결과의 캐시 유효기간이다. 요청마다 DB를 때리지 않도록
-// 두되, 이 기간만큼 revoke 반영이 지연됨(known tradeoff).
+// cacheTTL은 검증된 키 조회 결과의 기본 캐시 유효기간이다. 요청마다 DB를 때리지 않도록
+// 두되, 이 기간만큼 revoke 반영이 지연됨(known tradeoff). 환경변수 B2D_AUTH_CACHE_TTL로
+// 재정의 가능(온프레미스/고보안은 "0s"로 두어 캐시 없이 revoke 즉시 반영).
 const cacheTTL = 30 * time.Second
 
 // Authenticator는 X-API-Key(또는 Authorization: Bearer)를 SHA-256 해시로 대조하고
@@ -30,6 +32,7 @@ type Authenticator struct {
 	pool  *pgxpool.Pool
 	mu    sync.Mutex
 	cache map[string]cacheEntry // key: SHA-256 해시
+	ttl   time.Duration         // 캐시 TTL (기본 cacheTTL, B2D_AUTH_CACHE_TTL로 재정의)
 }
 
 type cacheEntry struct {
@@ -41,7 +44,18 @@ type cacheEntry struct {
 
 // NewAuthenticator는 pool을 사용하는 인증기를 만든다.
 func NewAuthenticator(pool *pgxpool.Pool) *Authenticator {
-	return &Authenticator{pool: pool, cache: map[string]cacheEntry{}}
+	return &Authenticator{pool: pool, cache: map[string]cacheEntry{}, ttl: cacheTTLFromEnv()}
+}
+
+// cacheTTLFromEnv는 B2D_AUTH_CACHE_TTL(예: "5s", "0s")을 읽어 캐시 TTL을 정한다.
+// 미설정/파싱실패/음수면 기본값 cacheTTL. 0이면 캐시 무효(요청마다 DB 조회 → revoke 즉시).
+func cacheTTLFromEnv() time.Duration {
+	if v := os.Getenv("B2D_AUTH_CACHE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return cacheTTL
 }
 
 // APIKeyID는 인증 미들웨어가 심은 api_keys.id를 돌려준다. meter가 사용한다.
@@ -110,7 +124,7 @@ func (a *Authenticator) lookup(ctx context.Context, hash string) (cacheEntry, bo
 	if err != nil {
 		return cacheEntry{}, false, err
 	}
-	ent.expires = now.Add(cacheTTL)
+	ent.expires = now.Add(a.ttl)
 	a.mu.Lock()
 	a.cache[hash] = ent
 	a.mu.Unlock()
