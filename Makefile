@@ -1,4 +1,4 @@
-.PHONY: up down build test vet migrate psql
+.PHONY: up down build test vet migrate psql docker-build snapshot restore
 
 up:
 	docker compose up -d --wait
@@ -21,3 +21,13 @@ migrate:
 
 psql:
 	docker compose exec postgis psql -U b2d -d b2d_geo
+
+docker-build:
+	docker build -t b2d-geo:latest .
+
+snapshot:
+	./scripts/snapshot.sh
+
+restore:
+	@test -n "$(SNAP)" || (echo "usage: make restore SNAP=<file>"; exit 1)
+	./scripts/restore.sh $(SNAP)

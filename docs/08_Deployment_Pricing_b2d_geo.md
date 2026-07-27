@@ -44,9 +44,9 @@
 - 대상: 1회성 대량 정제(수백만 건), 데이터 마이그레이션, 분석용.
 - 과금: 건당 종량(카카오 대비 대폭 언더컷) 또는 볼륨 정액.
 
-### 1-4. 배포 아티팩트 (확정 필요)
-- Go 서버 Docker 이미지(멀티스테이지, 정적 바이너리).
-- PostGIS + 적재된 데이터: **온프레미스는 데이터 스냅샷 전달**(초기 적재 시간 절약) 또는 ETL 스크립트+원천 프로비저닝 중 택. (스냅샷 배포 시 라이선스 재배포 조건 확인 필수.)
+### 1-4. 배포 아티팩트 (실체화 완료, 2026-07-27)
+- **`Dockerfile`** — 멀티스테이지(golang:1.26.5-alpine → distroless/static:nonroot), 정적 바이너리 b2d-server+b2d-etl 내장(migrations는 go:embed). `make docker-build`. 마이그레이션/키발급은 `docker run --entrypoint /b2d-etl ... migrate|apikey`.
+- **데이터 프로비저닝 = 스냅샷 우선**: `scripts/snapshot.sh`(pg_dump custom, api_keys/usage_log는 스키마만) → `scripts/restore.sh`. `make snapshot` / `make restore SNAP=<file>`. 덤프에 `CREATE EXTENSION postgis` 포함 → 빈 postgis DB에 바로 복원. 대안은 ETL 재적재(원천 파일 필요, 느림). **스냅샷 배포 = 공식데이터 재배포 → 공공누리 약관 준수(BRD §6).**
 - config/env: DB 접속, 라이선스 키, rate limit, 데이터 버전, `B2D_AUTH_CACHE_TTL`(키 revoke 반영 지연; 기본 30s, 온프레미스 `0s` 권장).
 - **데이터 신선도**: 공공데이터 갱신 주기(주소 월, 공시지가 연 등) → 갱신 파이프라인이 신뢰의 생명줄(§0-(b) 깊이 축의 전제).
 
@@ -119,7 +119,7 @@ b2d 차별점 아님**(카카오 반영 완료). 증거 `scripts/out/newgu_40.cs
 - [x] **각 축 단가 확정** — Bulk 30/20/10원(월최소 30만) · On-Prem 연 3,000만+갱신 800만 · RE Starter30/Pro100/Ent협의 (2026-07-27, §2-1~2-3).
 - [x] **BRD(`04_BRD_b2d_geo.md`) 공란 확정** — §5.1 요금 3축 실단가 반영 완료 (2026-07-27).
 - [x] **auth 캐시 revoke 지연 결정 (6-1 이월)** — 확정·구현(2026-07-27): 캐시 TTL을 `B2D_AUTH_CACHE_TTL` env로 설정 가능. 기본 30s(SaaS 허용), 온프레미스/고보안은 `0s`=캐시 없이 revoke 즉시 반영. `internal/auth/auth.go` + 단위테스트(TestCacheTTLFromEnv).
-- [ ] **데이터 스냅샷 vs ETL 프로비저닝** — 온프레미스 초기 적재 방식 + 라이선스 재배포 조건 검토.
+- [x] **데이터 스냅샷 vs ETL 프로비저닝** — 확정(2026-07-27): 스냅샷 우선(`scripts/snapshot.sh`/`restore.sh`), ETL 재적재는 대안. 라이선스: 공공누리 약관 준수(BRD §6), 재배포 조건은 데이터셋별 계약서에 명시.
 - [x] **6-2 정확도 수치** — §2-5 반영 완료 (2026-07-27, 증거 general_100.csv / newgu_40.csv).
 
 ## 4. 다음 단계
@@ -127,4 +127,4 @@ b2d 차별점 아님**(카카오 반영 완료). 증거 `scripts/out/newgu_40.cs
 1. ~~6-2 카카오 대비 정확도 비교~~ → **완료 (2026-07-27), §2-5 반영.**
 2. ~~각 축 단가 확정 → BRD 공란~~ → **완료 (2026-07-27).**
 3. ~~auth revoke 정책 결정~~ → **완료 (2026-07-27, `B2D_AUTH_CACHE_TTL`).**
-4. 배포 아티팩트(Docker 이미지, 데이터 스냅샷 절차) 실체화.
+4. ~~배포 아티팩트(Docker 이미지, 데이터 스냅샷 절차)~~ → **완료 (2026-07-27): `Dockerfile`, `scripts/snapshot.sh`/`restore.sh`, Makefile 타겟.**
