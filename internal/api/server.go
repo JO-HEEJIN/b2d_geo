@@ -5,11 +5,11 @@ package api
 
 import (
 	"context"
-	"log"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,23 +22,22 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/auth"
 	"github.com/JO-HEEJIN/b2d_geo/internal/geocode"
 	"github.com/JO-HEEJIN/b2d_geo/internal/meter"
+	"github.com/JO-HEEJIN/b2d_geo/internal/parcel"
 	"github.com/JO-HEEJIN/b2d_geo/internal/places"
 	"github.com/JO-HEEJIN/b2d_geo/internal/revgeo"
-	"github.com/JO-HEEJIN/b2d_geo/internal/parcel"
 )
 
 // Server는 최소 API 서버다.
 type Server struct {
 	Pool     *pgxpool.Pool
 	MolitKey string // 토지매매 실거래 (data.go.kr)
-	RebKey   string // R-ONE 부동산통계
 	Client   *http.Client
 }
 
 // New는 라우팅이 구성된 http.Handler와, 종료 시 계측기를 드레인하는
 // close 함수를 돌려준다.
-func New(pool *pgxpool.Pool, molitKey, rebKey string) (http.Handler, func()) {
-	s := &Server{Pool: pool, MolitKey: molitKey, RebKey: rebKey,
+func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
+	s := &Server{Pool: pool, MolitKey: molitKey,
 		Client: &http.Client{Timeout: 15 * time.Second}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.health)
@@ -237,31 +236,71 @@ func (s *Server) appraisalSales(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---- 지가변동률 (R-ONE A_2024_00903 사실 반환) ----
+// ---- 지가변동률 (land_price_index = R-ONE 용도지역별 월, 사실 반환) ----
 
+// appraisalPriceIndex는 land_price_index에서 (시군구×용도지역) 월별 변동률을 그대로
+// 돌려준다. cumulative=true면 시점수정용 누적률((1+r/100)의 곱)을 산식·기간과 함께 병기한다
+// (지시서 허용 계산). 평가·판단·보정 없음.
 func (s *Server) appraisalPriceIndex(w http.ResponseWriter, r *http.Request) {
-	ym := r.URL.Query().Get("ym")
-	if !allDigits(ym) || len(ym) != 6 {
-		writeErr(w, http.StatusBadRequest, "ym(YYYYMM) required")
+	q := r.URL.Query()
+	sigungu, useZone := q.Get("sigungu"), q.Get("use_zone_class")
+	from, to := q.Get("from"), q.Get("to")
+	if len(sigungu) != 5 || !allDigits(sigungu) {
+		writeErr(w, http.StatusBadRequest, "sigungu(5자리) required")
 		return
 	}
-	u := fmt.Sprintf("https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do?KEY=%s&Type=json&pIndex=1&pSize=1000&STATBL_ID=A_2024_00903&DTACYCLE_CD=MM&WRTTIME_IDTFR_ID=%s",
-		url.QueryEscape(s.RebKey), ym)
-	body, err := s.fetch(r.Context(), u)
+	if useZone == "" {
+		writeErr(w, http.StatusBadRequest, "use_zone_class required")
+		return
+	}
+	if (from != "" && (!allDigits(from) || len(from) != 6)) || (to != "" && (!allDigits(to) || len(to) != 6)) {
+		writeErr(w, http.StatusBadRequest, "from/to must be YYYYMM")
+		return
+	}
+	rows, err := s.Pool.Query(r.Context(),
+		`SELECT month, rate_pct::float8 FROM land_price_index
+		 WHERE sigungu_code=$1 AND use_zone_class=$2
+		   AND ($3='' OR month >= $3) AND ($4='' OR month <= $4)
+		 ORDER BY month`, sigungu, useZone, from, to)
 	if err != nil {
-		log.Printf("appraisal/price-index upstream error: %v", redactKey(err, s.RebKey))
-		writeErr(w, http.StatusBadGateway, "upstream unavailable")
+		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream r-one response invalid")
+	defer rows.Close()
+	type point struct {
+		Month string  `json:"month"`
+		Rate  float64 `json:"rate_pct"`
+	}
+	series := []point{}
+	for rows.Next() {
+		var p point
+		if err := rows.Scan(&p.Month, &p.Rate); err != nil {
+			writeErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		series = append(series, p)
+	}
+	if rows.Err() != nil {
+		writeErr(w, http.StatusInternalServerError, "read failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"source": "R-ONE 전국지가변동률조사 (A_2024_00903, 월)", "ym": ym,
-		"data": raw["SttsApiTblData"],
-	})
+	resp := map[string]any{
+		"source":         "R-ONE 용도지역별 지가변동률 (월)",
+		"sigungu_code":   sigungu,
+		"use_zone_class": useZone,
+		"count":          len(series),
+		"series":         series,
+	}
+	if q.Get("cumulative") == "true" && len(series) > 0 {
+		prod := 1.0
+		for _, p := range series {
+			prod *= 1 + p.Rate/100
+		}
+		resp["cumulative_pct"] = (prod - 1) * 100
+		resp["cumulative_formula"] = "∏(1 + rate_pct/100) - 1, 단위 %"
+		resp["period"] = map[string]string{"from": series[0].Month, "to": series[len(series)-1].Month}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func allDigits(s string) bool {

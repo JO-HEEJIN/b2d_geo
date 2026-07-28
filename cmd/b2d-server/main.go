@@ -34,7 +34,7 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
-	h, closeMeter := api.New(pool, os.Getenv("MOLIT_API_KEY"), os.Getenv("REB_API_KEY"))
+	h, closeMeter := api.New(pool, os.Getenv("MOLIT_API_KEY"))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

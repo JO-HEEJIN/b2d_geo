@@ -547,3 +547,10 @@ col3=자치구(또는 시와 동일)/col4=용도지역/col5~14=10개월 변동�
 결과: land_price_index 18,651행, 과천 녹지 3개월이 R-ONE 값과 정확히 일치. 원칙 준수 —
 용도지역 분류 원자료 그대로, 집계/(구)레거시/미매핑 행 스킵, 계산·판단 없음.
 소스 파일은 gitignore된 `data/reb/`에 보관(공공데이터 비추적 규칙).
+
+슬라이스 완결(API): `/v1/appraisal/price-index`를 틀린 라이브 프록시(A_2024_00903 총괄)에서
+land_price_index **DB-backed**로 교체. sigungu×용도지역×from/to 월별 배열 + cumulative
+((1+r/100)의 곱, 산식·기간 병기 — 지시서 허용 계산, 평가·판단 없음). 검증: 과천 녹지
+202604~06 누적 1.657%(=0.363/0.554/0.731 곱), geo 스코프 키는 403. 교체로 고아가 된
+RebKey/REB_API_KEY 배선을 struct/New/main에서 제거(내 변경이 만든 orphan만 정리).
+이제 ETL→DB→API 수직 슬라이스가 하나 완결됨.
