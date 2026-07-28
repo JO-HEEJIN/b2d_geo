@@ -582,3 +582,22 @@ official-price 엔드포인트(`/v1/appraisal/official-price`): PNU의 공시지
 base_year 미지정 시 최신. 개별은 아직 빈 테이블이라 현재는 표준지 PNU만 STANDARD로 응답,
 7-2에서 개별 적재되면 INDIVIDUAL이 자동 우선. 검증: 세종 표준지→STANDARD 878600/2026,
 base_year=2025→404, 없는 PNU→404, geo 403. 7-3 = 4/6.
+
+### Phase 7-4 독립 감사 (2026-07-28)
+
+생성/검증 분리 원칙대로 Phase 7 감정평가 코드를 **독립 b2d-qa 에이전트**가 적대적 감사.
+결과 PASS: ① 판단로직 부재 — 사실만, cumulative는 정확히 ∏(1+r/100)-1 재현(자체 recompute
+일치), standard-lots는 거리순뿐 유사도/추천 없음 ② 보안 — SQL 전부 바운드, 키 이중 redact,
+scope traversal까지 우회 불가, 에러 누출 없음 ③ 무결성 — geom 596,986건 100% 한국내, 환각좌표
+없음. 실이슈 4건 중 3건 수정:
+- **MED(진짜 스펙위반)**: official-price를 개별 우선으로 짰는데 지시서 §4는 "표준지 우선,
+  없으면 개별, 미적재 지역은 REGION_NOT_LOADED". 개별이 시군구 선택 적재라 전국 필수인
+  표준지가 신뢰 소스 — 스펙이 옳았다. 표준지 우선 + 422 REGION_NOT_LOADED로 수정.
+- LOW: standard-lots bbox prefilter 상수 /88000이 북위 고위도서 E-W 경도폭 과소추정
+  (경험상 0건 누락이나 잠재 false-neg) → /80000. lat/lng 앵커 한국 범위 검증 추가.
+- 미수정(스코프 밖): writeErr 문자열 envelope vs 미들웨어 객체 envelope 불일치 — Phase 7
+  이전 기존 코드라 전 엔드포인트 계약 변경 회피.
+
+교훈: 생성자(나)가 개별 우선을 "상식적"이라 넣었지만 이 시스템의 데이터 정책(개별 선택적재)
+때문에 스펙의 표준지 우선이 정답. 독립 감사가 생성자의 그럴듯한 오판을 잡았다 — 생성/검증
+분리의 가치. 남은 실무 시나리오 전구간 정부서비스 대조는 나머지 엔드포인트+브라우저 필요.

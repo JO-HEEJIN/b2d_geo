@@ -337,6 +337,10 @@ func (s *Server) appraisalStandardLots(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "pnu, or lat+lng required")
 			return
 		}
+		if alat < 33 || alat > 39 || alon < 124 || alon > 132 {
+			writeErr(w, http.StatusBadRequest, "lat/lng out of service area (Korea)")
+			return
+		}
 	}
 	radius := clampInt(atoiDefault(q.Get("radius"), 2000), 1, 10000)
 	limit := clampInt(atoiDefault(q.Get("limit"), 20), 1, 50)
@@ -348,7 +352,7 @@ func (s *Server) appraisalStandardLots(w http.ResponseWriter, r *http.Request) {
 		       price_per_sqm, land_category, use_zone, land_use, road_side, terrain_shape,
 		       ST_Y(geom), ST_X(geom)
 		FROM standard_lots
-		WHERE geom && ST_Expand(ST_SetSRID(ST_MakePoint($1,$2),4326), $3/88000.0)
+		WHERE geom && ST_Expand(ST_SetSRID(ST_MakePoint($1,$2),4326), $3/80000.0)
 		  AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, $3)
 		  AND ($4 = 0 OR base_year = $4)
 		  AND ($5 = '' OR use_zone = $5)
@@ -412,41 +416,55 @@ func (s *Server) appraisalOfficialPrice(w http.ResponseWriter, r *http.Request) 
 
 	var price int64
 	var year int
-	var ptype string
-	// 개별공시지가 우선
+	emit := func(ptype string) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"pnu": pnu, "price_per_sqm": price, "price_type": ptype, "base_year": year,
+		})
+	}
+	// 표준지(STANDARD) 우선 — 전국 필수 적재라 신뢰 소스 (지시서 §4).
 	err := s.Pool.QueryRow(r.Context(),
-		`SELECT price_per_sqm, base_year FROM official_land_prices
+		`SELECT price_per_sqm, base_year FROM standard_lots
 		 WHERE pnu=$1 AND ($2=0 OR base_year=$2) ORDER BY base_year DESC LIMIT 1`,
 		pnu, byr).Scan(&price, &year)
-	switch {
-	case err == nil:
-		ptype = "INDIVIDUAL"
-	case err == pgx.ErrNoRows:
-		// 표준지공시지가 폴백
-		err = s.Pool.QueryRow(r.Context(),
-			`SELECT price_per_sqm, base_year FROM standard_lots
-			 WHERE pnu=$1 AND ($2=0 OR base_year=$2) ORDER BY base_year DESC LIMIT 1`,
-			pnu, byr).Scan(&price, &year)
-		switch {
-		case err == nil:
-			ptype = "STANDARD"
-		case err == pgx.ErrNoRows:
-			writeErr(w, http.StatusNotFound, "no official price for this pnu")
-			return
-		default:
-			writeErr(w, http.StatusInternalServerError, "query failed")
-			return
-		}
-	default:
+	if err == nil {
+		emit("STANDARD")
+		return
+	}
+	if err != pgx.ErrNoRows {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"pnu":           pnu,
-		"price_per_sqm": price,
-		"price_type":    ptype, // STANDARD(표준지) | INDIVIDUAL(개별)
-		"base_year":     year,
-	})
+	// 표준지 없음 → 개별공시지가(INDIVIDUAL, 시군구 선택 적재)
+	err = s.Pool.QueryRow(r.Context(),
+		`SELECT price_per_sqm, base_year FROM official_land_prices
+		 WHERE pnu=$1 AND ($2=0 OR base_year=$2) ORDER BY base_year DESC LIMIT 1`,
+		pnu, byr).Scan(&price, &year)
+	if err == nil {
+		emit("INDIVIDUAL")
+		return
+	}
+	if err != pgx.ErrNoRows {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	// 개별도 없음: 해당 시군구에 개별공시지가가 아예 미적재면 404가 아니라 REGION_NOT_LOADED로
+	// 구분한다(선택 적재 정책 — 지시서 §4). 적재됐는데 이 PNU만 없으면 진짜 404.
+	var regionLoaded bool
+	if err := s.Pool.QueryRow(r.Context(),
+		`SELECT EXISTS(SELECT 1 FROM official_land_prices WHERE substr(pnu,1,5)=$1)`,
+		pnu[:5]).Scan(&regionLoaded); err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	if !regionLoaded {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error": map[string]string{
+				"code": "REGION_NOT_LOADED", "message": "개별공시지가 미적재 지역 (표준지 없음)",
+			},
+		})
+		return
+	}
+	writeErr(w, http.StatusNotFound, "no official price for this pnu")
 }
 
 func atoiDefault(s string, def int) int {
