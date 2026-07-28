@@ -49,6 +49,7 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	mux.HandleFunc("GET /v1/parcel/{pnu}", s.parcelByPNU)
 	mux.HandleFunc("GET /v1/appraisal/sales", s.appraisalSales)
 	mux.HandleFunc("GET /v1/appraisal/price-index", s.appraisalPriceIndex)
+	mux.HandleFunc("GET /v1/appraisal/standard-lots", s.appraisalStandardLots)
 
 	// Phase 4 미들웨어 체인: IP rate limit → auth → key rate limit → meter
 	// → handler. IP 제한이 최외곽이라 미인증 플러드도 막는다 (QA MED-1).
@@ -301,6 +302,115 @@ func (s *Server) appraisalPriceIndex(w http.ResponseWriter, r *http.Request) {
 		resp["period"] = map[string]string{"from": series[0].Month, "to": series[len(series)-1].Month}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// ---- 비교표준지 검색 (standard_lots, 앵커 반경 내 거리순 사실 반환) ----
+
+// appraisalStandardLots는 앵커(pnu 또는 lat/lng) 반경 내 표준지를 거리 오름차순으로
+// 돌려준다. 정렬·필터는 객관 지표(거리)만 — 유사도/추천/격차 점수 없음(지시서 절대경계).
+func (s *Server) appraisalStandardLots(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	pnu := q.Get("pnu")
+	var alon, alat float64
+	if pnu != "" {
+		if len(pnu) != 19 || !allDigits(pnu) {
+			writeErr(w, http.StatusBadRequest, "pnu must be 19 digits")
+			return
+		}
+		err := s.Pool.QueryRow(r.Context(),
+			`SELECT ST_X(p), ST_Y(p) FROM (SELECT ST_PointOnSurface(geom) p FROM parcels WHERE pnu=$1) t`,
+			pnu).Scan(&alon, &alat)
+		if err == pgx.ErrNoRows {
+			writeErr(w, http.StatusNotFound, "pnu not found in parcels")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "anchor lookup failed")
+			return
+		}
+	} else {
+		var e1, e2 error
+		alat, e1 = strconv.ParseFloat(q.Get("lat"), 64)
+		alon, e2 = strconv.ParseFloat(q.Get("lng"), 64)
+		if e1 != nil || e2 != nil {
+			writeErr(w, http.StatusBadRequest, "pnu, or lat+lng required")
+			return
+		}
+	}
+	radius := clampInt(atoiDefault(q.Get("radius"), 2000), 1, 10000)
+	limit := clampInt(atoiDefault(q.Get("limit"), 20), 1, 50)
+	baseYear := atoiDefault(q.Get("base_year"), 0)
+
+	rows, err := s.Pool.Query(r.Context(), `
+		SELECT pnu,
+		       round(ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography)::numeric, 1)::float8 AS dist,
+		       price_per_sqm, land_category, use_zone, land_use, road_side, terrain_shape,
+		       ST_Y(geom), ST_X(geom)
+		FROM standard_lots
+		WHERE geom && ST_Expand(ST_SetSRID(ST_MakePoint($1,$2),4326), $3/88000.0)
+		  AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, $3)
+		  AND ($4 = 0 OR base_year = $4)
+		  AND ($5 = '' OR use_zone = $5)
+		  AND ($6 = '' OR land_category = $6)
+		  AND ($7 = '' OR land_use = $7)
+		ORDER BY dist ASC
+		LIMIT $8`,
+		alon, alat, radius, baseYear, q.Get("use_zone"), q.Get("land_category"), q.Get("land_use"), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	defer rows.Close()
+	type lot struct {
+		PNU      string  `json:"pnu"`
+		DistM    float64 `json:"distance_m"`
+		Price    int64   `json:"price_per_sqm"`
+		LandCat  *string `json:"land_category"`
+		UseZone  *string `json:"use_zone"`
+		LandUse  *string `json:"land_use"`
+		RoadSide *string `json:"road_side"`
+		Shape    *string `json:"terrain_shape"`
+		Lat      float64 `json:"lat"`
+		Lng      float64 `json:"lng"`
+	}
+	out := []lot{}
+	for rows.Next() {
+		var l lot
+		if err := rows.Scan(&l.PNU, &l.DistM, &l.Price, &l.LandCat, &l.UseZone,
+			&l.LandUse, &l.RoadSide, &l.Shape, &l.Lat, &l.Lng); err != nil {
+			writeErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		out = append(out, l)
+	}
+	if rows.Err() != nil {
+		writeErr(w, http.StatusInternalServerError, "read failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"source":        "표준지공시지가 (MOLIT/NSDI)",
+		"anchor":        map[string]float64{"lat": alat, "lng": alon},
+		"radius_m":      radius,
+		"count":         len(out),
+		"standard_lots": out,
+	})
+}
+
+func atoiDefault(s string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return n
+	}
+	return def
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func allDigits(s string) bool {

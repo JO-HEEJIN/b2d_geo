@@ -570,3 +570,9 @@ EPSG:5186→4326 변환(jijeok go-shp·polygonWKT 패턴 재사용).
 결과: standard_lots **596,986행 17시도**, skipped 0, geom 한국 경계 내 100%. 검증:
 세종 표준지 전필드가 shapefile 원값과 일치. 번들은 gitignore된 data/에 보관.
 **7-1 ETL 3종(실거래·지가변동률·표준지) 전부 완료.**
+
+이어서 비교표준지 엔드포인트(`/v1/appraisal/standard-lots`, 7-3): 앵커(pnu는 parcels에서
+ST_PointOnSurface, 또는 lat/lng) 반경 내 표준지를 거리 오름차순으로. 정렬·필터는 객관
+지표(거리)만 — 유사도/추천 점수 없음(절대경계). 성능: `geom && ST_Expand(anchor, radius/88000)`
+GiST bbox prefilter + geography ST_DWithin 정밀 → 596k행에서 7ms. 검증: 세종 표준지 앵커 시
+자기 0m + 인근 148/156m, use_zone 필터, 서울 좌표 앵커 96.6m, geo 키 403. 7-3 = 3/6.
