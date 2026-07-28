@@ -554,3 +554,19 @@ land_price_index **DB-backed**로 교체. sigungu×용도지역×from/to 월별 
 202604~06 누적 1.657%(=0.363/0.554/0.731 곱), geo 스코프 키는 403. 교체로 고아가 된
 RebKey/REB_API_KEY 배선을 struct/New/main에서 제거(내 변경이 만든 orphan만 정리).
 이제 ETL→DB→API 수직 슬라이스가 하나 완결됨.
+
+### Phase 7-1 표준지공시지가 ETL (2026-07-28)
+
+사용자가 NSDI 표준지공시지가 번들(169MB, 시도별 AL_D152 nested zip)을 받아옴. go-shp
+인스펙터로 실물 필드 확인(29필드 A0~A28): A0=PNU/A7=기준연도/A9=㎡당공시지가/A13=지목/
+A16=용도지역/A18=이용상황/A20=형상/A22=도로접면/A14=면적/A23=기준일. 지세(고저)는 원자료에
+없어 NULL. 표준지는 **폴리곤**(점 아님)이라 geom(Point)은 ST_PointOnSurface로 대표점 산출,
+EPSG:5186→4326 변환(jijeok go-shp·polygonWKT 패턴 재사용).
+
+**버그: DBF 폭 초과 마스킹.** 충북 로드 중 area_sqm에 `"******************"`(DBF 숫자필드
+폭 초과 표기) → numeric 캐스트 실패로 중단(9시도 후). 유효 숫자 아니면 NULL 처리(numOrNil)로
+수정 후 완주. price/base_year는 이미 파싱 실패 시 skip이라 무사.
+
+결과: standard_lots **596,986행 17시도**, skipped 0, geom 한국 경계 내 100%. 검증:
+세종 표준지 전필드가 shapefile 원값과 일치. 번들은 gitignore된 data/에 보관.
+**7-1 ETL 3종(실거래·지가변동률·표준지) 전부 완료.**

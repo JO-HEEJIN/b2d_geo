@@ -18,13 +18,14 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landsales"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/standardlots"
 	"github.com/JO-HEEJIN/b2d_geo/internal/store"
 	"github.com/JO-HEEJIN/b2d_geo/migrations"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -76,6 +77,11 @@ func main() {
 	case "price-index":
 		if err := runPriceIndex(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "price-index failed:", err)
+			os.Exit(1)
+		}
+	case "standard-lots":
+		if err := runStandardLots(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "standard-lots failed:", err)
 			os.Exit(1)
 		}
 	case "juso":
@@ -252,6 +258,24 @@ func runPriceIndex(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("price-index: rows=%d records=%d skipped=%d empty=%d\n",
 		stats.DataRows, stats.Records, stats.Skipped, stats.EmptyCells)
+	return nil
+}
+
+// runStandardLots: b2d-etl standard-lots <표준지공시지가 번들.zip> — 표준지공시지가 적재 (멱등).
+func runStandardLots(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: b2d-etl standard-lots <표준지공시지가.zip>")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	stats, err := standardlots.Load(ctx, pool, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("standard-lots: files=%d rows=%d skipped=%d\n", stats.Files, stats.Rows, stats.Skipped)
 	return nil
 }
 
