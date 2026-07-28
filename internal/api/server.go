@@ -51,6 +51,7 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	mux.HandleFunc("GET /v1/appraisal/price-index", s.appraisalPriceIndex)
 	mux.HandleFunc("GET /v1/appraisal/standard-lots", s.appraisalStandardLots)
 	mux.HandleFunc("GET /v1/appraisal/official-price", s.appraisalOfficialPrice)
+	mux.HandleFunc("GET /v1/appraisal/land-use", s.appraisalLandUse)
 
 	// Phase 4 미들웨어 체인: IP rate limit → auth → key rate limit → meter
 	// → handler. IP 제한이 최외곽이라 미인증 플러드도 막는다 (QA MED-1).
@@ -465,6 +466,66 @@ func (s *Server) appraisalOfficialPrice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeErr(w, http.StatusNotFound, "no official price for this pnu")
+}
+
+// ---- 토지이용계획 (land_use_plan, 필지별 용도지역·지구·구역 사실 반환) ----
+
+// appraisalLandUse는 PNU의 용도지역/지구/구역과 원자료 사전판정 관계(포함/저촉/접함)를
+// 그대로 돌려준다. 저촉 면적비(%)는 원자료 미제공 — 우리가 ST_Area로 재판정하지 않는다(사실 반환).
+func (s *Server) appraisalLandUse(w http.ResponseWriter, r *http.Request) {
+	pnu := r.URL.Query().Get("pnu")
+	if len(pnu) != 19 || !allDigits(pnu) {
+		writeErr(w, http.StatusBadRequest, "pnu must be 19 digits")
+		return
+	}
+	rows, err := s.Pool.Query(r.Context(),
+		`SELECT zone_code, zone_name, relation FROM land_use_plan WHERE pnu=$1 ORDER BY zone_code`, pnu)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	defer rows.Close()
+	type zone struct {
+		Code     string `json:"zone_code"`
+		Name     string `json:"zone_name"`
+		Relation string `json:"relation"` // 포함 | 저촉 | 접함 (원자료 그대로)
+	}
+	zones := []zone{}
+	for rows.Next() {
+		var z zone
+		if err := rows.Scan(&z.Code, &z.Name, &z.Relation); err != nil {
+			writeErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		zones = append(zones, z)
+	}
+	if rows.Err() != nil {
+		writeErr(w, http.StatusInternalServerError, "read failed")
+		return
+	}
+	if len(zones) == 0 {
+		// 미적재 시군구면 404가 아니라 REGION_NOT_LOADED (전국 필수지만 부분 적재 중일 수 있음).
+		var regionLoaded bool
+		if err := s.Pool.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM land_use_plan WHERE substr(pnu,1,5)=$1)`, pnu[:5]).Scan(&regionLoaded); err != nil {
+			writeErr(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		if !regionLoaded {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"error": map[string]string{"code": "REGION_NOT_LOADED", "message": "토지이용계획 미적재 지역"},
+			})
+			return
+		}
+		writeErr(w, http.StatusNotFound, "no land use plan for this pnu")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pnu":   pnu,
+		"count": len(zones),
+		"zones": zones,
+		"note":  "관계는 원자료 사전판정(포함/저촉/접함); 저촉 면적비(%)는 원자료 미제공",
+	})
 }
 
 func atoiDefault(s string, def int) int {

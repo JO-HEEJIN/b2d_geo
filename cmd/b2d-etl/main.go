@@ -16,6 +16,7 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/jijeok"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/juso"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landsales"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landuse"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/standardlots"
@@ -25,7 +26,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -82,6 +83,11 @@ func main() {
 	case "standard-lots":
 		if err := runStandardLots(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "standard-lots failed:", err)
+			os.Exit(1)
+		}
+	case "land-use":
+		if err := runLandUse(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "land-use failed:", err)
 			os.Exit(1)
 		}
 	case "juso":
@@ -276,6 +282,25 @@ func runStandardLots(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("standard-lots: files=%d rows=%d skipped=%d\n", stats.Files, stats.Rows, stats.Skipped)
+	return nil
+}
+
+// runLandUse: b2d-etl land-use <토지이용계획공간정보 번들.zip> — 토지이용계획 적재 (멱등).
+func runLandUse(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: b2d-etl land-use <토지이용계획공간정보.zip>")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	stats, err := landuse.Load(ctx, pool, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("land-use: files=%d parcels=%d rows=%d misalign=%d badmeta=%d\n",
+		stats.Files, stats.Parcels, stats.Rows, stats.Misalign, stats.BadMeta)
 	return nil
 }
 

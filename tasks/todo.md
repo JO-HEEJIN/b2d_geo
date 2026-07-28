@@ -164,13 +164,14 @@
       · 표준지공시지가 = standardlots 로더(standard-lots): NSDI AL_D152 시도별 shapefile
         (EPSG:5186→4326, 폴리곤→ST_PointOnSurface) → standard_lots 596,986행(17시도).
         검증: 세종 3611010100108350000 전필드 일치, geom 한국 경계 내 100% ✓.
-- [ ] 7-2. ETL: 용도지역 폴리곤(UPIS, ST_MakeValid 건수 기록) + 토지특성 +
-      개별공시지가(--region 선택 1곳) -> 검증: 실필지 3건 용도지역 eum.go.kr 대조
-      (b2d-data, 1주)
-- [>] 7-3. API 6종 중 4종 (2026-07-28): sales·price-index(cumulative)·standard-lots
-      (거리순 비교표준지)·official-price(개별 우선→표준지 폴백, base_year 최신, price_type).
-      전부 DB-backed 사실반환 + RealEstate scope(geo키 403). 남음: land-use/land-features
-      (7-2 용도지역·토지특성 데이터 대기) + OpenAPI 증보 + TC-V.
+- [>] 7-2. ETL 3종 중 1종 (2026-07-29): 용도지역 = **토지이용계획(land-use)** 완료.
+      NSDI AL_D154 필지별 사전판정형(폴리곤 아님) → Option A 채택: land_use_plan
+      (pnu×zone, geom 미저장, 포함/저촉/접함 verbatim). 세종 100만행 검증. 저촉 면적비는
+      원자료 미제공(메모리 land-use-option-a-decision). 남음: 토지특성·개별공시지가(실물 대기).
+- [>] 7-3. API 6종 중 5종 (2026-07-28~29): sales·price-index(cumulative)·standard-lots
+      (거리순)·official-price(표준지우선+REGION_NOT_LOADED)·land-use(PNU→용도지역/지구/구역
+      +포함/저촉/접함). 전부 DB-backed 사실반환 + RealEstate scope(geo키 403). 남음:
+      land-features(7-2 토지특성 데이터 대기) + OpenAPI 증보 + TC-V.
 - [>] 7-4. 독립 b2d-qa 감사 완료·PASS (2026-07-28): 판단로직 부재·보안(SQLi/키유출/
       scope/에러누출/입력검증)·데이터무결성 3요소 CLEAN. 실이슈 수정: official-price
       표준지우선+REGION_NOT_LOADED(스펙 §4), bbox /80000, lat/lng 범위검증. 남음:
