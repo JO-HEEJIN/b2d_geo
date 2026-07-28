@@ -17,15 +17,19 @@
 
 ## 현재 상태 요약 (수동 갱신)
 
-- Phase 0 (골격) 완료: 스키마, 마이그레이션 러너, compose, CI, 에이전트 정의.
-- 다음 작업: Phase 1 ETL — juso.go.kr 파일 명세서 실물 확보와 원본 좌표계
-  확정이 첫 항목. 전체분 다운로드에 juso.go.kr 신청이 필요하면 사용자에게
-  브라우저 작업을 요청할 것.
+- Phase 0~6 완료. Phase 7(감정평가) 진행 중 (2026-07-28 기준):
+  · 7-0 스키마 · 7-키 API키 · 7-1 ETL 3종(실거래·지가변동률·표준지 596k) 완료.
+  · 7-3 API 4/6(sales·price-index·standard-lots·official-price, 전부 DB-backed 사실만).
+  · 7-4 독립 b2d-qa 감사 PASS + 실이슈 수정(official-price 표준지우선+REGION_NOT_LOADED 등).
+- 다음 작업: **7-2 ETL** — 용도지역 폴리곤(UPIS)·토지특성·개별공시지가 실물 파일 확보가
+  첫 항목(juso처럼 착수 전 실물 구조 확인). 받으면 마지막 엔드포인트 2종(land-use·
+  land-features) + official-price INDIVIDUAL 자동 활성. 이어서 7-5(로그·gitnexus reindex).
+  상세는 tasks/todo.md Phase 7.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **b2d_geo** (1296 symbols, 2136 relationships, 65 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **b2d_geo** (1371 symbols, 2331 relationships, 74 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
