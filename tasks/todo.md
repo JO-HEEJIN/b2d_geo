@@ -149,19 +149,20 @@
 정렬은 객관 지표(거리/날짜/금액)만. V-World 실시간 API 금지 (벌크 스냅샷만).
 실거래가는 rt.molit.go.kr 공식 CSV/오픈API만 (중개 플랫폼 스크레이핑 금지).
 
-- [ ] 7-0. migrations/007_appraisal.sql (6테이블: standard_lots, official_land_prices
-      연도 파티셔닝, land_features, use_zones, land_sales, land_price_index)
-      + api_keys.scopes text[] + GiST 인덱스 -> 검증: 마이그레이션 왕복 성공,
-      gitnexus 재인덱싱 (b2d-data, 0.5주)
+- [x] 7-0. 완료 (실측 2026-07-27): 007_appraisal.sql 6테이블 존재, official_land_prices
+      LIST(base_year) 파티셔닝(+default), api_keys.scopes=text[], GiST 인덱스
+      (standard_lots/use_zones/land_sales geom) 확인.
 - [>] 7-키. API 키 선확보 완료 (2026-07-07, .env 저장·커밋 금지):
       MOLIT_API_KEY (토지매매 실거래 RTMSDataSvcLandTrade — 검증 완료: 강남구
       202605 실데이터 수신. 주의: curl 기본 UA는 WAF 차단, Mozilla UA 필수),
       REB_API_KEY (R-ONE — 실호출 검증 완료, 월 지역별 지가변동률
       STATBL_ID=A_2024_00903, 202605 실데이터 확인). JUSO_API_KEY는 Phase 1 참조
-- [ ] 7-1. ETL: 표준지공시지가(전국) + 지가변동률(R-ONE, 월) + 실거래가(월 배치,
-      직전 3개월 upsert, 좌표 불가 행은 EMD_CENTROID 등급) -> 검증: 표준지 3필지를
-      realtyprice.kr과 대조, 지가변동률 1개 시군구 3개월치 R-ONE 대조, 실거래 5건
-      rt.molit.go.kr 대조 (b2d-data, 1주). 착수 전 실물 명세 확보 원칙 동일 적용
+- [>] 7-1. ETL 3종 중 2종 완료 (2026-07-27~28):
+      · 실거래가 = land_sales 로더(land-sales 서브커맨드, EMD_CENTROID) ✓
+      · 지가변동률 = priceindex 로더(price-index 서브커맨드): R-ONE 용도지역별 월 JSON →
+        land_price_index 18,651행(255시군구×10용도지역×10월 202509~202606). 검증:
+        과천 녹지 202604/05/06 = 0.363/0.554/0.731 R-ONE 일치 ✓. admin_areas 크로스워크(자치구 포함).
+      · 남음: 표준지공시지가(전국) — 실물 파일 대기.
 - [ ] 7-2. ETL: 용도지역 폴리곤(UPIS, ST_MakeValid 건수 기록) + 토지특성 +
       개별공시지가(--region 선택 1곳) -> 검증: 실필지 3건 용도지역 eum.go.kr 대조
       (b2d-data, 1주)

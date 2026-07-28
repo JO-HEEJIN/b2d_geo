@@ -16,6 +16,7 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/jijeok"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/juso"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landsales"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
 	"github.com/JO-HEEJIN/b2d_geo/internal/store"
 	"github.com/JO-HEEJIN/b2d_geo/migrations"
@@ -23,7 +24,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -70,6 +71,11 @@ func main() {
 	case "land-sales":
 		if err := runLandSales(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "land-sales failed:", err)
+			os.Exit(1)
+		}
+	case "price-index":
+		if err := runPriceIndex(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "price-index failed:", err)
 			os.Exit(1)
 		}
 	case "juso":
@@ -227,6 +233,25 @@ func runLandSales(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("land-sales %s %s: fetched=%d inserted=%d no_emd=%d ambiguous=%d no_geom=%d\n",
 		args[0], args[1], stats.Fetched, stats.Inserted, stats.NoEmd, stats.Ambiguous, stats.NoGeom)
+	return nil
+}
+
+// runPriceIndex: b2d-etl price-index <json파일> — 용도지역별 지가변동률 적재 (멱등).
+func runPriceIndex(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: b2d-etl price-index <용도지역별 지가변동률.json>")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	stats, err := priceindex.Load(ctx, pool, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("price-index: rows=%d records=%d skipped=%d empty=%d\n",
+		stats.DataRows, stats.Records, stats.Skipped, stats.EmptyCells)
 	return nil
 }
 
