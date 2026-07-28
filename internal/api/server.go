@@ -50,6 +50,7 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	mux.HandleFunc("GET /v1/appraisal/sales", s.appraisalSales)
 	mux.HandleFunc("GET /v1/appraisal/price-index", s.appraisalPriceIndex)
 	mux.HandleFunc("GET /v1/appraisal/standard-lots", s.appraisalStandardLots)
+	mux.HandleFunc("GET /v1/appraisal/official-price", s.appraisalOfficialPrice)
 
 	// Phase 4 미들웨어 체인: IP rate limit → auth → key rate limit → meter
 	// → handler. IP 제한이 최외곽이라 미인증 플러드도 막는다 (QA MED-1).
@@ -393,6 +394,58 @@ func (s *Server) appraisalStandardLots(w http.ResponseWriter, r *http.Request) {
 		"radius_m":      radius,
 		"count":         len(out),
 		"standard_lots": out,
+	})
+}
+
+// ---- 공시지가 (개별 우선, 없으면 표준지, 사실 반환) ----
+
+// appraisalOfficialPrice는 PNU의 공시지가를 돌려준다. 개별공시지가(official_land_prices)가
+// 있으면 그것(INDIVIDUAL), 없으면 표준지공시지가(standard_lots, STANDARD)를 반환한다.
+// base_year 미지정 시 최신 연도. 사실만 — 보정·계산 없음.
+func (s *Server) appraisalOfficialPrice(w http.ResponseWriter, r *http.Request) {
+	pnu := r.URL.Query().Get("pnu")
+	if len(pnu) != 19 || !allDigits(pnu) {
+		writeErr(w, http.StatusBadRequest, "pnu must be 19 digits")
+		return
+	}
+	byr := atoiDefault(r.URL.Query().Get("base_year"), 0) // 0 = 최신
+
+	var price int64
+	var year int
+	var ptype string
+	// 개별공시지가 우선
+	err := s.Pool.QueryRow(r.Context(),
+		`SELECT price_per_sqm, base_year FROM official_land_prices
+		 WHERE pnu=$1 AND ($2=0 OR base_year=$2) ORDER BY base_year DESC LIMIT 1`,
+		pnu, byr).Scan(&price, &year)
+	switch {
+	case err == nil:
+		ptype = "INDIVIDUAL"
+	case err == pgx.ErrNoRows:
+		// 표준지공시지가 폴백
+		err = s.Pool.QueryRow(r.Context(),
+			`SELECT price_per_sqm, base_year FROM standard_lots
+			 WHERE pnu=$1 AND ($2=0 OR base_year=$2) ORDER BY base_year DESC LIMIT 1`,
+			pnu, byr).Scan(&price, &year)
+		switch {
+		case err == nil:
+			ptype = "STANDARD"
+		case err == pgx.ErrNoRows:
+			writeErr(w, http.StatusNotFound, "no official price for this pnu")
+			return
+		default:
+			writeErr(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+	default:
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pnu":           pnu,
+		"price_per_sqm": price,
+		"price_type":    ptype, // STANDARD(표준지) | INDIVIDUAL(개별)
+		"base_year":     year,
 	})
 }
 

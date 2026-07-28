@@ -167,11 +167,10 @@
 - [ ] 7-2. ETL: 용도지역 폴리곤(UPIS, ST_MakeValid 건수 기록) + 토지특성 +
       개별공시지가(--region 선택 1곳) -> 검증: 실필지 3건 용도지역 eum.go.kr 대조
       (b2d-data, 1주)
-- [>] 7-3. API 6종 중 3종 (2026-07-28): sales(라이브 프록시)·price-index(DB-backed,
-      cumulative)·standard-lots(DB-backed: 앵커 pnu/latlng 반경 내 표준지 거리순,
-      radius/base_year/use_zone/land_category/land_use 필터, GiST prefilter 7ms) +
-      RealEstate scope 검증(geo키 403). 남음: land-use/land-features/official-price
-      (7-2 데이터 대기) + OpenAPI 증보 + TC-V.
+- [>] 7-3. API 6종 중 4종 (2026-07-28): sales·price-index(cumulative)·standard-lots
+      (거리순 비교표준지)·official-price(개별 우선→표준지 폴백, base_year 최신, price_type).
+      전부 DB-backed 사실반환 + RealEstate scope(geo키 403). 남음: land-use/land-features
+      (7-2 용도지역·토지특성 데이터 대기) + OpenAPI 증보 + TC-V.
 - [ ] 7-4. 실무 시나리오 검증(대상 필지 1건 전 구간 정부 서비스 교차 대조) +
       판단 로직 부재 감사 (score/weight/adjust 금지 패턴 grep) + 보안 감사
       (b2d-qa, 0.5주)

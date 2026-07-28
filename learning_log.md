@@ -576,3 +576,9 @@ ST_PointOnSurface, 또는 lat/lng) 반경 내 표준지를 거리 오름차순�
 지표(거리)만 — 유사도/추천 점수 없음(절대경계). 성능: `geom && ST_Expand(anchor, radius/88000)`
 GiST bbox prefilter + geography ST_DWithin 정밀 → 596k행에서 7ms. 검증: 세종 표준지 앵커 시
 자기 0m + 인근 148/156m, use_zone 필터, 서울 좌표 앵커 96.6m, geo 키 403. 7-3 = 3/6.
+
+official-price 엔드포인트(`/v1/appraisal/official-price`): PNU의 공시지가를 개별공시지가
+(official_land_prices, INDIVIDUAL) 우선, 없으면 표준지(standard_lots, STANDARD)로 폴백.
+base_year 미지정 시 최신. 개별은 아직 빈 테이블이라 현재는 표준지 PNU만 STANDARD로 응답,
+7-2에서 개별 적재되면 INDIVIDUAL이 자동 우선. 검증: 세종 표준지→STANDARD 878600/2026,
+base_year=2025→404, 없는 PNU→404, geo 403. 7-3 = 4/6.
