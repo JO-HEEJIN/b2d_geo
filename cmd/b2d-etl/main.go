@@ -299,8 +299,8 @@ func runLandUse(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("land-use: files=%d parcels=%d rows=%d misalign=%d badmeta=%d\n",
-		stats.Files, stats.Parcels, stats.Rows, stats.Misalign, stats.BadMeta)
+	fmt.Printf("land-use: files=%d rows=%d final=%d skipped=%d\n",
+		stats.Files, stats.Rows, stats.Final, stats.Skipped)
 	return nil
 }
 
