@@ -164,10 +164,13 @@
       · 표준지공시지가 = standardlots 로더(standard-lots): NSDI AL_D152 시도별 shapefile
         (EPSG:5186→4326, 폴리곤→ST_PointOnSurface) → standard_lots 596,986행(17시도).
         검증: 세종 3611010100108350000 전필드 일치, geom 한국 경계 내 100% ✓.
-- [>] 7-2. ETL 3종 중 1종 (2026-07-29): 용도지역 = **토지이용계획(land-use)** 완료.
-      NSDI AL_D154 필지별 사전판정형(폴리곤 아님) → Option A 채택: land_use_plan
-      (pnu×zone, geom 미저장, 포함/저촉/접함 verbatim). 세종 100만행 검증. 저촉 면적비는
-      원자료 미제공(메모리 land-use-option-a-decision). 남음: 토지특성·개별공시지가(실물 대기).
+- [>] 7-2. ETL 3종 중 1종 (2026-07-29~30): 용도지역 = **토지이용계획(land-use)** 전국적재 완료.
+      NSDI AL_D155 CSV(필지별 사전판정형, 폴리곤 아님) → Option A: land_use_plan
+      (pnu×zone, geom 미저장, 포함/저촉/접함 verbatim). **전국 222,379,474행**(staged 262.3M →
+      DISTINCT ON dedup: work_mem 384MB + PK 일시제거, 컨테이너 1.9GB 한도). zone_name 클린.
+      **발견**: sido 12 = 전남광주통합특별시(광주29+전남46 통합, 2026-07 시행) 정상 적재 —
+      단 parcels/admin_areas는 통합前이라 stale → 크로스정합 후속(메모리 gwangju-jeonnam-merger-2026).
+      저촉 면적비 원자료 미제공(land-use-option-a-decision). 남음: 토지특성·개별공시지가(실물 대기).
 - [>] 7-3. API 6종 중 5종 (2026-07-28~29): sales·price-index(cumulative)·standard-lots
       (거리순)·official-price(표준지우선+REGION_NOT_LOADED)·land-use(PNU→용도지역/지구/구역
       +포함/저촉/접함). 전부 DB-backed 사실반환 + RealEstate scope(geo키 403). 남음:

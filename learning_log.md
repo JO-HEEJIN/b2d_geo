@@ -652,3 +652,39 @@ shapefile 원값과 일치. relation 분포 포함 82.5만/저촉 14.5만/접함
 과했고, truncation 삽질(4~5회 재작성)을 자초했다. **속성만 필요하면(no geometry) CSV > SHP.**
 데이터 형태를 실물로 확인한 뒤에도(필지별 사전판정 = geom 불요), 다운로드 포맷 재추천을 안 한 게
 실수. 이후엔 "이 산출물에 geometry가 실제로 필요한가?"를 포맷 추천 전에 먼저 물을 것.
+
+**전국 적재 성능 문제 (2026-07-29).** CSV 로더로 전국 적재 시 규모가 컸다: 17시도 → UNLOGGED
+staging(lu_stg) **262,280,096 행**(전국 필지×용도지역). 문제는 마지막 단계
+`INSERT ... SELECT DISTINCT ON (pnu,zone_code) ... FROM lu_stg ORDER BY pnu,zone_code`가
+기본 work_mem(4MB)로 262M 행을 디스크 외부정렬 → **3시간 42분째 안 끝남**(land_use_plan 0 유지).
+staging은 이미 끝났으므로 프로세스를 kill(INSERT 롤백, lu_stg 보존)하고 dedup만 고성능으로 재실행:
+`SET work_mem='1GB'; SET maintenance_work_mem='2GB'; ALTER TABLE ... DROP CONSTRAINT pkey;`
+→ DISTINCT ON INSERT(정렬 청크 커져 merge 패스 급감) → `ADD PRIMARY KEY`(빈→벌크 인덱스 빌드,
+행별 유지 회피) → `DROP lu_stg`. 교훈: **1억+ 행 dedup은 work_mem 상향 + PK 일시제거(벌크 인덱스)가
+필수.** 향후 대용량 로더는 처음부터 이 패턴으로 짤 것(또는 COPY 전 Go에서 dedup 불가 시 staging+
+고성능 dedup을 로더에 내장).
+
+**dedup 메모리 — OOM·좀비 실경과 (2026-07-29).** 위 "work_mem 1GB/2GB"는 실패했다. 컨테이너
+메모리 한도가 ≈1.9GB인데 `work_mem='2GB'`로 dedup 정렬 → **Postgres OOM 크래시**. UNLOGGED
+lu_stg(262M staged)는 크래시 복구 시 truncate로 날아갔다(standard_lots는 무사). 재적재 후
+`work_mem='384MB'` + `maintenance_work_mem='384MB'`로 낮춰(컨테이너 한도 내) 안전화 →
+성공. 또 하나: 로더 클라이언트를 `pkill`해도 **DB 백엔드는 INSERT를 계속 실행**(락 보유, 4h30m
+잔존) → `pg_terminate_backend`로 서버측 종료 필요했다. 교훈: **work_mem은 컨테이너 물리한도
+아래로** 잡을 것(2GB>1.9GB=OOM). 클라이언트 kill ≠ 서버 쿼리 중단.
+
+**전국 적재 완료 (2026-07-30).** 최종 `land_use_plan` = **222,379,474행**(staged 262,280,096 →
+DISTINCT ON dedup, 384MB work_mem 외부정렬 ~1시간+, PK 일시제거 후 벌크 재생성, lu_stg drop).
+skipped=0. zone_name 클린(과밀억제권역·농업진흥구역·보전산지 등). 16개 현행 시도.
+
+**"누락 시도"의 함정 = 광주·전남 행정통합 (2026-07-30 검증).** 검증 중 시도코드 분포가
+11,12,26,27,28,30,31,36,41,43,44,47,48,50,51,52 — **광주(29)·전남(46) 없고 비표준 "12" 존재**.
+`admin_areas`·`parcels` 두 참조테이블에 12가 없어 "고아/가짜"로 판단하고 **제외를 권고했다 —
+오판.** 사용자가 "믿어도 되냐, 다시 확인해봐"로 제동. 소스 CSV `법정동명` 컬럼 확인 →
+**"전남광주통합특별시 목포시…"**: 12 = **광주광역시+전라남도 통합 신설 특별시**(2026-07-08 기준,
+시군구 27=광주5구+전남22시군, 데이터에 목포시·동구 공존). 즉 광주/전남은 누락이 아니라 12로
+통합됐고, 로더의 "전역 최신 날짜" 로직은 오히려 통합시를 정확히 잡았다. **제외했으면 현재
+광주+전남 데이터를 통째로 삭제할 뻔.** 교훈([[verify-recency-sensitive-facts]]): 행정개편은
+학습지식·기존 참조테이블로 "가짜" 단정 금지, **원자료(법정동명)로 확인**. 참조테이블 자체가
+개편 전이라 stale일 수 있다. 후속: `parcels`/`admin_areas`를 통합후로 갱신하거나 29/46→12
+매핑 필요(안 하면 광주/전남 지역 API가 land_use(12) ↔ parcels(29/46) 크로스 불일치).
+메모리: [[gwangju-jeonnam-merger-2026]].

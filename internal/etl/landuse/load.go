@@ -96,8 +96,24 @@ func Load(ctx context.Context, pool *pgxpool.Pool, bundlePath string) (*Stats, e
 		return total, fmt.Errorf("최신(%s) AL_D155 없음", latest)
 	}
 
-	// (pnu, zone_code) 중복 제거하며 최종 테이블로.
-	tag, err := pool.Exec(ctx, `
+	// (pnu, zone_code) 중복 제거하며 최종 테이블로. 수억 행이라 한 세션에 work_mem를
+	// 컨테이너 메모리 한도(≈1.9GB) 안에서 384MB로 올리고(2GB는 OOM 크래시 유발 — 실측),
+	// PK를 일시 제거해 정렬·인덱스 비용을 낮춘다. 전용 커넥션이라야 SET이 이후 문에 적용된다.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return total, err
+	}
+	defer conn.Release()
+	for _, stmt := range []string{
+		"SET work_mem='384MB'",
+		"SET maintenance_work_mem='384MB'",
+		"ALTER TABLE land_use_plan DROP CONSTRAINT IF EXISTS land_use_plan_pkey",
+	} {
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			return total, fmt.Errorf("dedup prep: %w", err)
+		}
+	}
+	tag, err := conn.Exec(ctx, `
 		INSERT INTO land_use_plan (pnu, zone_code, zone_name, relation, source_version)
 		SELECT DISTINCT ON (pnu, zone_code) pnu, zone_code, zone_name, relation, source_version
 		FROM lu_stg ORDER BY pnu, zone_code`)
@@ -105,7 +121,10 @@ func Load(ctx context.Context, pool *pgxpool.Pool, bundlePath string) (*Stats, e
 		return total, fmt.Errorf("dedup insert: %w", err)
 	}
 	total.Final = int(tag.RowsAffected())
-	if _, err := pool.Exec(ctx, `DROP TABLE lu_stg`); err != nil {
+	if _, err := conn.Exec(ctx, `ALTER TABLE land_use_plan ADD PRIMARY KEY (pnu, zone_code)`); err != nil {
+		return total, fmt.Errorf("re-add pk: %w", err)
+	}
+	if _, err := conn.Exec(ctx, `DROP TABLE lu_stg`); err != nil {
 		return total, err
 	}
 	return total, nil
