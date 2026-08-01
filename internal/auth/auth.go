@@ -149,10 +149,16 @@ func requiredScope(path string) string {
 	if strings.HasPrefix(path, "/v1/appraisal/") {
 		return "realestate"
 	}
+	if path == "/v1/usage" {
+		return "" // 사용량 조회는 인증만 하면 scope 무관(메타 엔드포인트)
+	}
 	return "geo"
 }
 
 func hasScope(scopes []string, want string) bool {
+	if want == "" { // scope 불요 엔드포인트: 인증된 키면 통과
+		return true
+	}
 	for _, s := range scopes {
 		if s == want {
 			return true

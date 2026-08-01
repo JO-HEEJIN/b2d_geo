@@ -41,7 +41,9 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 		Client: &http.Client{Timeout: 15 * time.Second}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.health)
+	mux.HandleFunc("GET /v1/usage", s.usageHandler)
 	mux.HandleFunc("GET /v1/geocode", s.geocodeHandler)
+	mux.HandleFunc("POST /v1/geocode/batch", s.geocodeBatchHandler)
 	mux.HandleFunc("GET /v1/reverse", s.reverseHandler)
 	mux.HandleFunc("GET /v1/places/search", s.placesSearchHandler)
 	mux.HandleFunc("GET /v1/parcel/by-point", s.parcelByPoint)
@@ -150,6 +152,92 @@ func (s *Server) geocodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// geocodeBatchHandler는 여러 도로명주소를 한 요청(POST, 최대 50건)으로 지오코딩한다.
+// 각 주소를 단건 geocode.Search와 동일 규칙으로 처리하고 입력 순서대로 결과를 돌려준다.
+// 한 주소의 실패는 그 항목에만 담고 배치 전체는 계속한다.
+func (s *Server) geocodeBatchHandler(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Addresses []string `json:"addresses"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, `JSON body {"addresses":[...]} required`)
+		return
+	}
+	if len(body.Addresses) == 0 || len(body.Addresses) > 50 {
+		writeErr(w, http.StatusBadRequest, "addresses must have 1..50 entries")
+		return
+	}
+	type item struct {
+		Q          string          `json:"q"`
+		Match      string          `json:"match,omitempty"`
+		Result     *geocode.Result `json:"result,omitempty"`
+		Candidates []string        `json:"candidates,omitempty"`
+		Error      string          `json:"error,omitempty"`
+	}
+	items := make([]item, 0, len(body.Addresses))
+	for _, q := range body.Addresses {
+		it := item{Q: q}
+		if len(q) < 5 {
+			it.Error = "q (road address) required"
+			items = append(items, it)
+			continue
+		}
+		res, err := geocode.Search(r.Context(), s.Pool, q)
+		switch {
+		case err == geocode.ErrAmbiguous:
+			it.Match, it.Candidates = "ambiguous", res.Candidates
+		case err == pgx.ErrNoRows:
+			it.Error = "no match"
+		case err != nil:
+			it.Error = "query failed"
+		default:
+			it.Result = res
+		}
+		items = append(items, it)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": len(items), "items": items})
+}
+
+// usageHandler는 인증된 키 자신의 usage_log 집계를 엔드포인트별로 돌려준다(자기 키만).
+func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
+	keyID, ok := auth.APIKeyID(r.Context())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "auth required")
+		return
+	}
+	rows, err := s.Pool.Query(r.Context(), `
+		SELECT endpoint, SUM(count)::bigint, MIN(bucket), MAX(bucket)
+		FROM usage_log WHERE api_key_id = $1
+		GROUP BY endpoint ORDER BY 2 DESC`, keyID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	defer rows.Close()
+	type usageItem struct {
+		Endpoint  string    `json:"endpoint"`
+		Count     int64     `json:"count"`
+		FirstSeen time.Time `json:"first_seen"`
+		LastSeen  time.Time `json:"last_seen"`
+	}
+	items := make([]usageItem, 0)
+	var total int64
+	for rows.Next() {
+		var it usageItem
+		if err := rows.Scan(&it.Endpoint, &it.Count, &it.FirstSeen, &it.LastSeen); err != nil {
+			writeErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		total += it.Count
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"total": total, "items": items})
+}
+
 // reverseHandler는 좌표 → 최근접 건물 주소 (v0: 반경 200m KNN).
 func (s *Server) reverseHandler(w http.ResponseWriter, r *http.Request) {
 	lon, err1 := strconv.ParseFloat(r.URL.Query().Get("lon"), 64)
@@ -177,7 +265,7 @@ func (s *Server) placesSearchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := places.Search(r.Context(), s.Pool, q, limit)
+	out, err := places.Search(r.Context(), s.Pool, q, r.URL.Query().Get("category"), limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return

@@ -709,3 +709,12 @@ bcode로 법정동을 대체했다(admin_areas.geom이 전부 NULL — 구역 �
 없으면 건물 bcode 폴백. LATERAL 한 쿼리로 합치면 후보 건물마다 ST_Contains가 반복돼 느려서 분리.
 검증: GiST 5ms, 다지역 정확, 종로구 경계에서 건물 bcode≠포함필지 bcode divergence 실증(점의
 법정동은 그 땅=필지 기준이 맞음).
+
+**API 잔여 3종 (2026-08-01, Phase 4-1).** ① geocode batch: POST /v1/geocode/batch(최대 50),
+단건 geocode.Search를 항목별로 돌리고 한 항목 실패는 그 항목 error에만 담아 배치는 200 유지.
+② places category: Search에 category 파라미터 추가, 3단 UNION 각 branch·초성경로에
+`AND ($n='' OR category_code=$n)` — 빈값이면 무필터. ③ /v1/usage: usage_log를 `auth.APIKeyID(ctx)`로
+호출자 키에만 스코핑 집계. **설계 판단**: usage는 메타(자기 사용량)라 geo/realestate 어느 스코프든
+접근돼야 함 → `requiredScope("/v1/usage")=""` + `hasScope(_,"")=true`(scope 불요=인증만). scope=""는
+usage 경로에만 매핑되므로 다른 엔드포인트 격리(realestate→geo=403) 유지 — E2E로 확인. openapi.yaml
+11 paths로 증보. auth는 보안 미들웨어라 기존 테스트 회귀 통과 확인 후 변경.

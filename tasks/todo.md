@@ -88,8 +88,11 @@
 
 ## Phase 4 — API 서버 (b2d-api)
 
-- [>] 4-1. 9종 가동 (geocode/reverse/places/parcel×3/appraisal×2/health).
-      잔여: geocode batch, places/category, /v1/usage
+- [x] 4-1. 완료 (2026-08-01): 잔여 3종 마감 — **geocode batch**(POST /v1/geocode/batch,
+      최대 50건, 항목별 결과·배치 지속) · **places category 필터**(category_code 정확일치) ·
+      **/v1/usage**(자기 API키 엔드포인트별 집계, scope 무관 접근). openapi.yaml 증보(11 paths).
+      E2E curl 검증: category 정확필터, batch 유효/무효 항목별, usage geo·realestate 둘 다
+      200(scope="" 은 usage 전용, 나머지 격리 403 유지), 무인증 401.
 - [x] 4-2. 미들웨어 체인 완료 (2026-07-12): auth(SHA-256+scope)→ratelimit(token
       bucket key+IP)→meter(채널+CopyFrom 배치). 실검증 401/403/429/계측 5종 통과.
       알려진 이슈(Phase 6 감사 대상): auth 캐시 30s revoke 지연, 무인증 요청

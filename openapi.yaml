@@ -52,6 +52,31 @@ paths:
               schema: { $ref: "#/components/schemas/HandlerError" }
               example: { error: "db unreachable" }
 
+  /v1/usage:
+    get:
+      summary: 자기 API 키의 사용량 집계 (scope 무관, 인증만 필요)
+      operationId: usage
+      responses:
+        "200":
+          description: 엔드포인트별 호출 수 집계 (호출자 키 한정, usage_log 배치 반영분)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer, format: int64 }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        endpoint: { type: string }
+                        count: { type: integer, format: int64 }
+                        first_seen: { type: string, format: date-time }
+                        last_seen: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /v1/geocode:
     get:
       summary: 주소 → 좌표 (geo scope)
@@ -79,6 +104,49 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/geocode/batch:
+    post:
+      summary: 여러 주소 일괄 지오코딩 (geo scope, 최대 50건)
+      operationId: geocodeBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [addresses]
+              properties:
+                addresses:
+                  type: array
+                  items: { type: string }
+                  minItems: 1
+                  maxItems: 50
+            example:
+              addresses: ["서울특별시 중구 세종대로 110", "제주특별자치도 제주시 광양11길 10"]
+      responses:
+        "200":
+          description: 입력 순서대로 항목별 결과. 항목 실패는 error에 담고 배치는 성공(200).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        q: { type: string }
+                        match: { type: string }
+                        result: { $ref: "#/components/schemas/GeocodeResult" }
+                        candidates: { type: array, items: { type: string } }
+                        error: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
   /v1/reverse:
@@ -122,6 +190,11 @@ paths:
           required: true
           description: 검색어 (최소 2자)
           schema: { type: string, minLength: 2 }
+        - name: category
+          in: query
+          required: false
+          description: category_code 정확일치 필터 (비면 전체)
+          schema: { type: string }
         - name: limit
           in: query
           required: false
