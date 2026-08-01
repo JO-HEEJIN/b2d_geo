@@ -71,7 +71,10 @@
 - [x] 2-3. 3단 폴백 완료 (2026-07-12): exact/exact_partial(시도생략 후보검출)/
       jibun(admin_areas→parcels 경로)/trigram(set_limit 0.55 — 112s→4s 실측).
       score=similarity 원값 노출
-- [ ] 2-4. reverse: 법정동 폴리곤 ST_Contains + 건물 KNN (`<->`)
+- [x] 2-4. 완료 (2026-08-01): reverse = 건물 KNN(`<->`, 도로명주소·거리·건물좌표) +
+      **포함필지 ST_Contains**(법정동 bcode·명). admin_areas.geom 미적재라 39.7M 필지
+      폴리곤 포함관계로 법정동 판정(GiST 5ms), 포함필지 없으면 건물 bcode 폴백. 검증:
+      강남/수원(신규)/제주 정확, 종로구 경계 divergence 실증(건물≠필지 bcode).
 - [x] 2-5. 정확도 측정 완료: 실주소 200건×4변형 = 800질의 **100.0%**
       (초기 14% → 읍면 RoadKey·붙임토큰 결함 수정 후). learning_log 기록
 - [x] 2-6. 완료 확인 (2026-07-18): learning_log 379행~ Phase 2·3·4 기록 실존

@@ -700,3 +700,12 @@ shp/dbf/shx를 **같은 `layer.*`로 덮어써** 마지막 1벌(=1M)만 go-shp�
 대량 upsert 전 보조 인덱스(geom GiST·bcode_jibun) 임시제거 → 로드 → 재생성으로 가속(pnu pkey는
 ON CONFLICT용 유지). 교훈: **"정확히 라운드넘버(1M)" = 인위적 절단 신호**, 원자료 구조를 실물로
 열어볼 것. 압축 안에 동일 확장자 다수 = 덮어쓰기 버그 의심.
+
+**reverse 법정동 폴리곤 ST_Contains (2026-08-01, Phase 2-4).** 원래 revgeo는 최근접 건물의
+bcode로 법정동을 대체했다(admin_areas.geom이 전부 NULL — 구역 폴리곤 미적재). 2-4의 "법정동
+폴리곤 ST_Contains"가 미구현이었음. 5-1로 parcels가 전량(39.7M, geom+GiST) 확보되자 별도 구역
+폴리곤 없이 **필지 포함관계**로 법정동을 정확히 얻을 수 있게 됨(dissolve 불필요). revgeo.ByPoint를
+쿼리 2개로: ① 건물 KNN(도로명주소·거리) ② 포함필지 ST_Contains(법정동 bcode·명), 포함필지
+없으면 건물 bcode 폴백. LATERAL 한 쿼리로 합치면 후보 건물마다 ST_Contains가 반복돼 느려서 분리.
+검증: GiST 5ms, 다지역 정확, 종로구 경계에서 건물 bcode≠포함필지 bcode divergence 실증(점의
+법정동은 그 땅=필지 기준이 맞음).
