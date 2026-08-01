@@ -718,3 +718,11 @@ bcode로 법정동을 대체했다(admin_areas.geom이 전부 NULL — 구역 �
 접근돼야 함 → `requiredScope("/v1/usage")=""` + `hasScope(_,"")=true`(scope 불요=인증만). scope=""는
 usage 경로에만 매핑되므로 다른 엔드포인트 격리(realestate→geo=403) 유지 — E2E로 확인. openapi.yaml
 11 paths로 증보. auth는 보안 미들웨어라 기존 테스트 회귀 통과 확인 후 변경.
+
+**places 반경 필터 (2026-08-01, Phase 3-1 마감).** placesSearch에 lon/lat/radius 추가. SQL에서
+`AND ($6 <= 0 OR ST_DWithin(geom::geography, ST_MakePoint($4,$5)::geography, $6))` — radius≤0이면
+필터 무시(Go 분기 불필요, 한 쿼리로 활성/비활성). 핸들러는 lon·lat 둘 다 파싱되면 radius를 기본
+1km·1..20km로 클램프, 아니면 0. 반경조건을 3단 UNION 각 branch·초성경로에 넣음. **성능**: geography
+캐스트가 geom GiST를 직접 못 써도, 키워드 필터(exact/prefix/ILIKE + tier별 LIMIT)가 후보를 이미
+좁혀 반경은 그 소수에만 계산 → 저비용. E2E: 강남역 반경500m 약국 반환점 최대거리 381m(≤500 확인),
+미지정 시 전국. 교훈: 필터 on/off는 `$param<=0 OR <cond>` 한 쿼리 관용구로 분기 회피.

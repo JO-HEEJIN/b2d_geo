@@ -259,13 +259,21 @@ func (s *Server) reverseHandler(w http.ResponseWriter, r *http.Request) {
 
 // placesSearchHandler는 상호명 키워드 검색 (v0: trigram).
 func (s *Server) placesSearchHandler(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
+	qv := r.URL.Query()
+	q := qv.Get("q")
 	if len(q) < 2 {
 		writeErr(w, http.StatusBadRequest, "q required (2+ chars)")
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := places.Search(r.Context(), s.Pool, q, r.URL.Query().Get("category"), limit)
+	limit, _ := strconv.Atoi(qv.Get("limit"))
+	// lon,lat 둘 다 유효할 때만 반경 필터 활성(기본 1km, 1..20km). 없으면 radius=0.
+	lon, errLon := strconv.ParseFloat(qv.Get("lon"), 64)
+	lat, errLat := strconv.ParseFloat(qv.Get("lat"), 64)
+	var radius float64
+	if errLon == nil && errLat == nil {
+		radius = float64(clampInt(atoiDefault(qv.Get("radius"), 1000), 1, 20000))
+	}
+	out, err := places.Search(r.Context(), s.Pool, q, qv.Get("category"), lon, lat, radius, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return

@@ -81,8 +81,10 @@
 
 ## Phase 3 — Places / Keyword (b2d-engine)
 
-- [>] 3-1. 초성 검색 완료 (choseong 컬럼 272만 백필 + trgm, 'ㅇㄴㄹㅇㄱ'→온누리약국
-      0.2s). 일반 검색 3단 UNION으로 10s→0.16s. 반경/카테고리 필터 잔여
+- [x] 3-1. 완료 (2026-08-01): 초성 검색(choseong 272만 백필 + trgm, 'ㅇㄴㄹㅇㄱ'→온누리약국
+      0.2s), 일반 3단 UNION(10s→0.16s), **반경 필터**(lon/lat/radius, ST_DWithin,
+      radius≤0 비활성, places geom GiST) + **카테고리 필터**(4-1에서). E2E 검증: 강남역
+      반경500m 약국 최대거리 381m, 미지정 시 전국 섞임.
 - [ ] 3-2. Verification phase: 실존 상호 20건 검색 재현율 확인
 - [x] 3-3. 완료 확인 (2026-07-18): 위와 동일 섹션에 포함
 

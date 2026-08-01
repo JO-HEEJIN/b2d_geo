@@ -195,6 +195,21 @@ paths:
           required: false
           description: category_code 정확일치 필터 (비면 전체)
           schema: { type: string }
+        - name: lon
+          in: query
+          required: false
+          description: 반경 필터 중심 경도 (lat와 함께 있어야 활성)
+          schema: { type: number, format: double }
+        - name: lat
+          in: query
+          required: false
+          description: 반경 필터 중심 위도 (lon와 함께 있어야 활성)
+          schema: { type: number, format: double }
+        - name: radius
+          in: query
+          required: false
+          description: 반경(m). lon/lat 있을 때만 적용, 기본 1000, 1..20000로 클램프
+          schema: { type: integer, default: 1000, minimum: 1, maximum: 20000 }
         - name: limit
           in: query
           required: false
