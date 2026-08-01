@@ -35,7 +35,8 @@ ON CONFLICT (pnu) DO UPDATE SET
     land_category = EXCLUDED.land_category, source_version = EXCLUDED.source_version`
 
 // Load는 연속지적도 시도 zip 1개를 임시 해제 후 parcels에 upsert한다.
-// sourceVersion은 파일명의 기준일(YYYYMMDD)을 YYYY-MM-DD로 넘긴다.
+// 대용량 시도는 V-World가 100만 레코드 단위로 shapefile을 여러 벌 담으므로
+// zip 안의 모든 shapefile을 적재한다. sourceVersion은 파일명의 기준일을 넘긴다.
 func Load(ctx context.Context, pool *pgxpool.Pool, zipPath, sourceVersion string) (*LoadStats, error) {
 	dir, err := os.MkdirTemp("", "jijeok-*")
 	if err != nil {
@@ -43,20 +44,30 @@ func Load(ctx context.Context, pool *pgxpool.Pool, zipPath, sourceVersion string
 	}
 	defer os.RemoveAll(dir)
 
-	shpPath, err := extract(zipPath, dir)
+	shpPaths, err := extract(zipPath, dir)
 	if err != nil {
 		return nil, fmt.Errorf("extract %s: %w", zipPath, err)
 	}
 
+	stats := &LoadStats{}
+	for _, shpPath := range shpPaths {
+		if err := loadShapefile(ctx, pool, shpPath, sourceVersion, stats); err != nil {
+			return stats, fmt.Errorf("%s: %w", filepath.Base(shpPath), err)
+		}
+	}
+	return stats, nil
+}
+
+// loadShapefile는 shapefile 하나를 읽어 parcels에 upsert한다(stats에 누적).
+func loadShapefile(ctx context.Context, pool *pgxpool.Pool, shpPath, sourceVersion string, stats *LoadStats) error {
 	r, err := shp.Open(shpPath)
 	if err != nil {
-		return nil, fmt.Errorf("open shp: %w", err)
+		return fmt.Errorf("open shp: %w", err)
 	}
 	defer r.Close()
 
 	// 필드 인덱스는 명세 고정: 0=A0,1=A1(PNU),2=A2(bcode),3=A3,4=A4(지번),5=A5(지번+지목)
 	dec := korean.EUCKR.NewDecoder()
-	stats := &LoadStats{}
 	batch := &pgx.Batch{}
 	flush := func() error {
 		if batch.Len() == 0 {
@@ -101,41 +112,39 @@ func Load(ctx context.Context, pool *pgxpool.Pool, zipPath, sourceVersion string
 		stats.Rows++
 		if batch.Len() >= 500 {
 			if err := flush(); err != nil {
-				return stats, err
+				return err
 			}
 		}
 	}
-	if err := flush(); err != nil {
-		return stats, err
-	}
-	return stats, nil
+	return flush()
 }
 
-// extract는 zip에서 shp/dbf/shx를 풀고 .shp 경로를 돌려준다.
-func extract(zipPath, dir string) (string, error) {
+// extract는 zip 안의 모든 shp/dbf/shx를 원래 basename으로 풀고 .shp 경로 전부를
+// 돌려준다. basename을 보존해야 go-shp가 각 .shp의 짝 .dbf/.shx를 찾는다.
+func extract(zipPath, dir string) ([]string, error) {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer zr.Close()
-	var shpPath string
+	var shpPaths []string
 	for _, f := range zr.File {
 		ext := strings.ToLower(filepath.Ext(f.Name))
 		if ext != ".shp" && ext != ".dbf" && ext != ".shx" {
 			continue
 		}
-		dst := filepath.Join(dir, "layer"+ext)
+		dst := filepath.Join(dir, filepath.Base(f.Name))
 		if err := copyEntry(f, dst); err != nil {
-			return "", err
+			return nil, err
 		}
 		if ext == ".shp" {
-			shpPath = dst
+			shpPaths = append(shpPaths, dst)
 		}
 	}
-	if shpPath == "" {
-		return "", fmt.Errorf("no .shp in %s", zipPath)
+	if len(shpPaths) == 0 {
+		return nil, fmt.Errorf("no .shp in %s", zipPath)
 	}
-	return shpPath, nil
+	return shpPaths, nil
 }
 
 func copyEntry(f *zip.File, dst string) error {

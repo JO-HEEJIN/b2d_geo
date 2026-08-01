@@ -688,3 +688,15 @@ skipped=0. zone_name 클린(과밀억제권역·농업진흥구역·보전산지
 개편 전이라 stale일 수 있다. 후속: `parcels`/`admin_areas`를 통합후로 갱신하거나 29/46→12
 매핑 필요(안 하면 광주/전남 지역 API가 land_use(12) ↔ parcels(29/46) 크로스 불일치).
 메모리: [[gwangju-jeonnam-merger-2026]].
+
+**연속지적도 다중 shapefile 잠복 버그 (2026-08-01, Phase 5-1).** parcels가 8개 대용량 도에서
+정확히 100만 행씩 = 도당 정확히 1,000,000은 자연수치일 수 없음 → 조사. 처음엔 "1M 상한"이
+로더 코드나 DB에 있는 줄 알았으나 로더엔 없음. **실물 확인**: 시도 zip을 열어보니 대용량 도는
+V-World가 **100만 레코드 단위로 shapefile을 여러 벌**로 쪼갬(경기·전남·경북 6벌, 경남 5, 충남·
+전북 4, 충북·강원 3). `.shx` 크기로 벌당 정확히 1M 확인. 근본 원인: `extract()`가 zip 안 모든
+shp/dbf/shx를 **같은 `layer.*`로 덮어써** 마지막 1벌(=1M)만 go-shp가 읽음. 재run으로도 안 고쳐질
+잠복 버그였다. **수정**: extract()가 원래 basename 보존해 전부 풀고 모든 .shp 반환 →
+`loadShapefile` 헬퍼로 각 shapefile upsert. 재적재: **13.3M → 39,728,087필지**(전국, skipped=0).
+대량 upsert 전 보조 인덱스(geom GiST·bcode_jibun) 임시제거 → 로드 → 재생성으로 가속(pnu pkey는
+ON CONFLICT용 유지). 교훈: **"정확히 라운드넘버(1M)" = 인위적 절단 신호**, 원자료 구조를 실물로
+열어볼 것. 압축 안에 동일 확장자 다수 = 덮어쓰기 버그 의심.
