@@ -28,7 +28,7 @@
 
 ## Phase 1 — ETL (b2d-data 주도)
 
-- [>] 1-1. (거의 완료) juso.go.kr 파일 명세서 실물 확보 -> 컬럼 정의를 코드 상수로 문서화,
+- [x] 1-1. 완료: juso.go.kr 파일 명세서 실물 확보 -> 컬럼 정의를 코드 상수로 문서화,
       원본 좌표계(EPSG) 확정 (docs 미검증 항목 SDP R-04, TC-I03 해소)
       - 공개분(한글DB/건물DB/주소DB) 레이아웃 verbatim 확보: docs/dataspec/juso.md
       - 연계신청 **승인 완료 (2026-07-07 확인)**: 도로명주소 건물 도형 + 출입구
@@ -47,9 +47,9 @@
         다음: 마이페이지 승인내역에서 자료구분코드(cntc_cd) 확인 → 품목별
         자동 다운로드 (도형 계열은 date_gb=M). 구역의 도형은 별도 품목 —
         월별 목록 '데이터 없음'은 변동분 리스트라서였음, 전체분은 승인 제공
-- [>] 1-2. (in progress, juso-spec) 도로명주소 한글 DB 다운로드/파싱 (MS949 -> UTF-8,
-      golang.org/x/text 사용, `|` 구분자) -> 검증: 샘플 행 파싱 결과 육안 대조.
-      위치정보 DB 부분은 승인 후 진행
+- [x] 1-2. 완료: 도로명주소 한글 DB 다운로드/파싱 (MS949 -> UTF-8, golang.org/x/text,
+      `|` 구분자) — juso 로더(internal/etl/juso, parse_test 포함) 커밋 38eae64. 위치정보
+      (건물도형·출입구)는 entrance 로더로 5179→4326 적재, 지오코딩 실검증은 1-6에서 완료.
 - [x] 1-3. 상가(상권)정보 CSV(15083033) 적재 완료
       -> 명세: docs/dataspec/sbiz.md (UTF-8/쉼표/39컬럼, 좌표 4326 실측 확정).
       전국 2,725,319행 (17개 시도, skip 0, 소분류 247종 = 명세 일치), 멱등 확인
@@ -168,7 +168,7 @@
 - [x] 7-0. 완료 (실측 2026-07-27): 007_appraisal.sql 6테이블 존재, official_land_prices
       LIST(base_year) 파티셔닝(+default), api_keys.scopes=text[], GiST 인덱스
       (standard_lots/use_zones/land_sales geom) 확인.
-- [>] 7-키. API 키 선확보 완료 (2026-07-07, .env 저장·커밋 금지):
+- [x] 7-키. API 키 선확보 완료 (2026-07-07, .env 저장·커밋 금지):
       MOLIT_API_KEY (토지매매 실거래 RTMSDataSvcLandTrade — 검증 완료: 강남구
       202605 실데이터 수신. 주의: curl 기본 UA는 WAF 차단, Mozilla UA 필수),
       REB_API_KEY (R-ONE — 실호출 검증 완료, 월 지역별 지가변동률
