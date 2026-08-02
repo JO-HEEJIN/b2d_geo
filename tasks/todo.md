@@ -193,7 +193,9 @@
       (거리순)·official-price(개별 우선 INDIVIDUAL/표준지 STANDARD+REGION_NOT_LOADED)·land-use
       (PNU→용도지역/지구/구역+포함/저촉/접함)·**land-features(PNU→이용상황·지형·도로접면 원값)**.
       전부 DB-backed 사실반환 + RealEstate scope(geo키 403). **OpenAPI 증보 완료(15 paths,
-      appraisal 6종)**. E2E: 서울 INDIVIDUAL 활성·land-features 정상·미적재 REGION_NOT_LOADED. 잔여: TC-V.
+      appraisal 6종)**. E2E: 서울 INDIVIDUAL 활성·land-features 정상·미적재 REGION_NOT_LOADED.
+      **TC-V 실행 완료(2026-08-02)**: V01/V02/V06/V08/V09/V10 통과 + 실버그 수정(REGION_NOT_LOADED
+      판정이 substr로 seq-scan 타임아웃 → PK범위 hasRegion으로 Index Only Scan). V03/V07 Option A 대체.
 - [x] 7-4. 독립 b2d-qa 감사 완료·PASS (2026-07-28): 판단로직 부재·보안(SQLi/키유출/
       scope/에러누출/입력검증)·데이터무결성 3요소 CLEAN. 실이슈 수정: official-price
       표준지우선+REGION_NOT_LOADED(스펙 §4), bbox /80000, lat/lng 범위검증. 남음:
@@ -245,7 +247,8 @@ Phase 0~7 전체 완료 (2026-08-02). todo 50/50 [x]. 변경 요약과 남은 �
    미적재는 REGION_NOT_LOADED. landfeature 로더는 중첩 zip(서울)·직접 CSV(경기) 양형태 지원.
 2. **광주-전남 크로스정합**: land_use_plan은 통합後(sido 12), parcels/admin_areas는 통합前(29/46)라
    해당 지역 PNU 크로스조회 불일치. **통합後 연속지적도·법정동코드 발행 시 갱신 필요**.
-3. **TC-V**: 감정평가 6종 엔드포인트 테스트케이스(docs/05_TestCases) 증보 미완.
+3. **TC-V**: 완료(2026-08-02) — V01/V02/V06/V08/V09/V10 실행 통과, 실버그(REGION_NOT_LOADED
+   판정 seq-scan 타임아웃) 수정. V04/V05는 rt.molit 브라우저 대상, V03/V07 Option A 대체.
 4. **인프라**: 대용량 테이블(land_use_plan 222M·parcels 39.7M)이 개발 컨테이너 1.9GB에서 동작 —
    프로덕션은 메모리·work_mem 상향 권장. 대량 재적재는 인덱스 임시제거 패턴 필수.
 5. **저촉 면적비(%)**: 원자료 미제공 — ST_Area 재판정은 "판단 개입"이라 원칙상 금지(사실 반환 경계).

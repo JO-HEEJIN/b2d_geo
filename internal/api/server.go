@@ -76,6 +76,17 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
+// hasRegion은 pnu 앞5자리(시군구) 프리픽스가 table에 적재됐는지 확인한다. substr(pnu,1,5)=..
+// 는 인덱스를 못 써 부재 지역 조회가 대용량 테이블 전체스캔(타임아웃)이 되므로, pnu PK
+// 범위 조건으로 Index Only Scan을 탄다. table은 호출부의 컴파일 상수만 전달한다(SQLi 무관).
+func (s *Server) hasRegion(ctx context.Context, table, pnu5 string) (bool, error) {
+	var ok bool
+	err := s.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM `+table+` WHERE pnu >= $1 AND pnu <= $2)`,
+		pnu5+"00000000000000", pnu5+"99999999999999").Scan(&ok)
+	return ok, err
+}
+
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	if err := s.Pool.Ping(r.Context()); err != nil {
 		writeErr(w, http.StatusServiceUnavailable, "db unreachable")
@@ -547,14 +558,12 @@ func (s *Server) appraisalOfficialPrice(w http.ResponseWriter, r *http.Request) 
 	}
 	// 개별도 없음: 해당 시군구에 개별공시지가가 아예 미적재면 404가 아니라 REGION_NOT_LOADED로
 	// 구분한다(선택 적재 정책 — 지시서 §4). 적재됐는데 이 PNU만 없으면 진짜 404.
-	var regionLoaded bool
-	if err := s.Pool.QueryRow(r.Context(),
-		`SELECT EXISTS(SELECT 1 FROM official_land_prices WHERE substr(pnu,1,5)=$1)`,
-		pnu[:5]).Scan(&regionLoaded); err != nil {
+	loaded, rerr := s.hasRegion(r.Context(), "official_land_prices", pnu[:5])
+	if rerr != nil {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	if !regionLoaded {
+	if !loaded {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error": map[string]string{
 				"code": "REGION_NOT_LOADED", "message": "개별공시지가 미적재 지역 (표준지 없음)",
@@ -602,13 +611,12 @@ func (s *Server) appraisalLandUse(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(zones) == 0 {
 		// 미적재 시군구면 404가 아니라 REGION_NOT_LOADED (전국 필수지만 부분 적재 중일 수 있음).
-		var regionLoaded bool
-		if err := s.Pool.QueryRow(r.Context(),
-			`SELECT EXISTS(SELECT 1 FROM land_use_plan WHERE substr(pnu,1,5)=$1)`, pnu[:5]).Scan(&regionLoaded); err != nil {
+		loaded, rerr := s.hasRegion(r.Context(), "land_use_plan", pnu[:5])
+		if rerr != nil {
 			writeErr(w, http.StatusInternalServerError, "query failed")
 			return
 		}
-		if !regionLoaded {
+		if !loaded {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"error": map[string]string{"code": "REGION_NOT_LOADED", "message": "토지이용계획 미적재 지역"},
 			})
@@ -653,13 +661,12 @@ func (s *Server) appraisalLandFeatures(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == pgx.ErrNoRows:
 		// 미적재 시군구면 404가 아니라 REGION_NOT_LOADED (지역선택 적재 중).
-		var regionLoaded bool
-		if e := s.Pool.QueryRow(r.Context(),
-			`SELECT EXISTS(SELECT 1 FROM land_features WHERE substr(pnu,1,5)=$1)`, pnu[:5]).Scan(&regionLoaded); e != nil {
+		loaded, rerr := s.hasRegion(r.Context(), "land_features", pnu[:5])
+		if rerr != nil {
 			writeErr(w, http.StatusInternalServerError, "query failed")
 			return
 		}
-		if !regionLoaded {
+		if !loaded {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"error": map[string]string{"code": "REGION_NOT_LOADED", "message": "토지특성 미적재 지역"},
 			})

@@ -772,3 +772,15 @@ Phase 7(감정평가 모듈) 완료 — 서울 파일럿 스코프, 다른 시�
 work_mem(4MB)라 5M행 외부정렬 ~10분/파일 — 대량 시도 다수 확장 시 work_mem 상향 최적화 여지.
 검증: 수원시청 REGION_NOT_LOADED→INDIVIDUAL 5,799,000원/㎡ + land-features, 서울 값 불변. 교훈:
 같은 데이터셋도 다운로드 경로/시점 따라 압축 구조가 달라질 수 있다 — 로더는 형태에 유연하게.
+
+**TC-V 실행 + REGION_NOT_LOADED seq-scan 버그 (2026-08-02, Phase 7-3 TC-V).** 감정평가 6종
+테스트케이스(설계 시점 작성분)를 실호출로 실행: V02 부산(미적재) official-price 조회가 **HTTP 000
+(타임아웃)**. 진단: 미적재 판정 `EXISTS(... WHERE substr(pnu,1,5)=$1)`가 substr 함수라 pnu PK
+인덱스를 못 쓰고 **seq scan** — 서울만(888K)일 땐 빨랐는데 서울+경기(5.8M) 누적 + 부재 지역(부산)이라
+전체 스캔(EXPLAIN: Rows Removed 5,825,654) → 10s 초과 → net/http가 연결 끊어 000. 수정: `pnu BETWEEN
+prefix+'0'×14 AND prefix+'9'×14`(PK 범위)로 교체 → **Index Only Scan 0.05s**. official-price·land-use
+(222M!)·land-features 3핸들러 공통 `hasRegion` 헬퍼로. 교훈: **함수를 씌운 컬럼 조건(substr/lower/cast)은
+인덱스를 못 탄다** — 프리픽스 매칭은 PK 범위로. 테이블이 커질수록(지역 확장) 표면화되는 잠복 성능버그.
+TC-V 나머지: V08 cumulative 누적 0.5147% 수기검산 일치, V09 코드에 금지 판단로직 0건, V10 scope 403,
+V06 거리순+점수필드 부재 — 전부 통과. **TC-V가 실버그를 잡음(설계TC 실행의 가치).** V03/V07은 Option A
+대체(use_zones 미사용, 저촉 면적비 미제공), V04/V05는 rt.molit 브라우저 대상.

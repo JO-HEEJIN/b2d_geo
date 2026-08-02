@@ -141,3 +141,25 @@ DB 불필요. Store interface 미사용. 순수 함수 검증.
 추적 매트릭스 증보: FR-70~75 → TC-V01~V05, FR-80~85 → TC-V06~V08/V10,
 NFR-11 → TC-V04, NFR-12 → TC-V09, BR-09 → TC-V01/V06, BR-10 → TC-V09.
 미커버: FR-72/FR-75/FR-81/FR-83/FR-85는 구현 시 동형 TC 추가 (V01/V04/V06 패턴 복제).
+
+### TC-V 실행 결과 (2026-08-02, 서울+경기 적재분, b2d-server 실호출)
+
+- **TC-V01 표준지**: standard-lots가 지가·지목·용도지역·이용상황·도로접면 반환(예: 서울 중구
+  PNU 1114010100100270000 = 17,960,000원/㎡·대·일반상업지역·상업용·세로한면(불)). 부동산공시가격
+  알리미 최종 대조는 브라우저(사용자). 개별공시지가는 7-4에서 원단위 완전일치 확인.
+- **TC-V02 REGION_NOT_LOADED**: 부산(미적재) official-price → **422 REGION_NOT_LOADED** ✓.
+  ⚠️ **실버그 발견·수정**: 미적재 판정을 `substr(pnu,1,5)=$1`로 해 인덱스 미사용 → 서울+경기
+  5.8M행 전체 seq scan → 10s 타임아웃(HTTP 000). `pnu BETWEEN prefix+0..prefix+9`(PK 범위)로
+  교체 → Index Only Scan 0.05s. official-price·land-use·land-features 3핸들러 공통 hasRegion 헬퍼.
+- **TC-V06 standard-lots**: 거리 오름차순([120.3, 120.7, 136.3, …]) + 점수성 필드 부재
+  (필드=distance_m·pnu·지가·지목·용도지역·이용상황·도로접면·지형형상) ✓.
+- **TC-V08 cumulative**: 종로 녹지지역 202604~06 누적 = **0.5147%**, 수기 검산 ∏(1+r/100)−1과
+  일치, cumulative_formula·period 병기 ✓.
+- **TC-V09 코드감사**: appraisal 핸들러·전 코드에 금지 판단로직(유사도/가중치/보정/추천) **0건** ✓.
+- **TC-V10 scope**: geo 키로 /v1/appraisal 호출 → **403** ✓.
+- **TC-V03 (use_zones)**: **Option A로 대체** — 용도지역을 폴리곤(use_zones) 아닌 필지별
+  land_use_plan에 적재(메모리 land-use-option-a-decision). use_zones 미사용, 본 TC N/A.
+- **TC-V07 (저촉 면적비)**: Option A는 원자료 관계(포함/저촉/접함)만 반환, 면적비는 원자료
+  미제공. 용도지역 목록↔토지이음 대조는 7-4(세종대로·역삼동)에서 완료.
+- **TC-V04/V05 (실거래)**: land-sales 엔드포인트·로더 upsert 멱등(7-1). rt.molit.go.kr 금액·
+  계약일 대조는 브라우저 대상(미실행).
