@@ -205,4 +205,46 @@
 
 ## Review
 
-(전체 완료 후 작성: 변경 요약 + 남은 이슈)
+Phase 0~7 전체 완료 (2026-08-02). todo 50/50 [x]. 변경 요약과 남은 이슈.
+
+### 변경 요약
+- **P0 골격**: PostGIS 스키마 + 마이그레이션 러너(`b2d-etl migrate`), 프로젝트 스켈레톤.
+- **P1 ETL**: 도로명주소 한글DB(juso)·출입구(entrance, 지오코딩 주력 EPSG:5179→4326)·상가정보
+  (sbiz 272만행) 적재, 전 경로 ST_Transform 4326 통일, GiST/trgm/btree 인덱스.
+- **P2 Geocoding/Reverse**: 주소 파서 상태기계 + 3단 폴백(exact/exact_partial/jibun/trigram,
+  set_limit 0.55로 112s→4s), reverse(건물 KNN `<->` + 포함필지 ST_Contains 법정동). 800질의 100%.
+- **P3 Places**: 초성 검색(choseong 272만 백필+trgm), 일반 3단 UNION(10s→0.16s), 반경/카테고리
+  필터. 재현율 19/20(위치맥락 시 20/20 — 미스는 정확동명 30개 모호성).
+- **P4 API**: 11 엔드포인트 + 인증(SHA-256 키·scope)·IP/키 rate limit·usage meter 체인.
+  geocode batch·places category·/v1/usage 추가.
+- **P5 부동산**: 연속지적도 전량 적재(다중 shapefile 로더 버그 픽스 **13.3M→39.7M필지**),
+  parcel 3종(point/jibun/pnu), 토지이음 정부대조 3/3(지목·면적 도형↔공부 ±0.3%).
+- **P6 상용화**: 카카오 vs b2d 정확도 100건 100% 매치, 독립 QA 보안감사 CLEAN, govulncheck 통합,
+  배포 3형태 + 요금 3축.
+- **P7 감정평가**: ETL 6종(실거래·지가변동률 18,651행·표준지 596,986행·용도지역 전국 222,379,474행·
+  개별공시지가 서울 887,699행·토지특성 서울 888,806행), API 6종, openapi 15 paths.
+  정부대조 **개별공시지가 원단위 완전일치**(65,730,000·58,300,000원/㎡).
+
+### 주요 기술 결정
+- **land-use Option A**: 필지별 사전판정형(포함/저촉/접함) 직접 적재, geom·저촉면적비 미저장 —
+  SHP(254자 truncation·콤마패킹) 폐기, CSV 채택. "속성만 필요하면 CSV > SHP".
+- **대용량 dedup**: 1억+ 행은 work_mem 상향(384MB, 컨테이너 1.9GB 한도; 2GB는 OOM) + PK 일시제거.
+- **감정평가 지역선택 적재**: TRUNCATE 없이 upsert(다른 지역 보존), 미적재는 REGION_NOT_LOADED.
+- **사실 반환 원칙**: 보정/평가/추천 금지, 원값 라벨 그대로(재분류 금지).
+
+### 발견·사고
+- **전남광주통합특별시(sido 12)**: 광주29+전남46 2026-07 통합. 참조 테이블에 없어 "가짜·제외" 오판
+  직전 사용자 제동으로 데이터 손실 방지 — 원자료(법정동명)로 확인. 행정개편은 학습지식·기존 참조로
+  단정 금지(메모리 gwangju-jeonnam-merger-2026, rigor-verify-before-concluding).
+- **지적 다중 shapefile 잠복 버그**: V-World가 대용량 시도를 100만 레코드 단위 shapefile 여러 벌로
+  분할하는데 extract()가 1벌만 처리 → 8개 도 영구 1M 상한. 전 shapefile 처리로 수정.
+
+### 남은 이슈 (후속)
+1. **감정평가 지역 확장**: 개별공시지가·토지특성 현재 **서울만**. 타 시군구는 실물 확보 시 동일 로더
+   (`individual-price`/`land-features`)로 확장 — 미적재는 REGION_NOT_LOADED로 정상 응답.
+2. **광주-전남 크로스정합**: land_use_plan은 통합後(sido 12), parcels/admin_areas는 통합前(29/46)라
+   해당 지역 PNU 크로스조회 불일치. **통합後 연속지적도·법정동코드 발행 시 갱신 필요**.
+3. **TC-V**: 감정평가 6종 엔드포인트 테스트케이스(docs/05_TestCases) 증보 미완.
+4. **인프라**: 대용량 테이블(land_use_plan 222M·parcels 39.7M)이 개발 컨테이너 1.9GB에서 동작 —
+   프로덕션은 메모리·work_mem 상향 권장. 대량 재적재는 인덱스 임시제거 패턴 필수.
+5. **저촉 면적비(%)**: 원자료 미제공 — ST_Area 재판정은 "판단 개입"이라 원칙상 금지(사실 반환 경계).
