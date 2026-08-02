@@ -66,7 +66,7 @@ func Load(ctx context.Context, pool *pgxpool.Pool, bundlePath string) (*Stats, e
 		}
 	}
 	if latest == "" {
-		return nil, fmt.Errorf("AL_D195_*_<date>.zip 없음: %s", bundlePath)
+		return nil, fmt.Errorf("AL_D195_*_<date> 없음: %s", bundlePath)
 	}
 
 	if _, err := pool.Exec(ctx, `CREATE UNLOGGED TABLE IF NOT EXISTS lf_stg
@@ -84,7 +84,15 @@ func Load(ctx context.Context, pool *pgxpool.Pool, bundlePath string) (*Stats, e
 		if !strings.HasPrefix(base, "AL_D195_") || dateOf(base) != latest {
 			continue
 		}
-		if err := loadNested(ctx, pool, f, stats); err != nil {
+		// 번들 형태 두 가지: 중첩 zip(서울: AL_D195_*.zip→CSV) 또는 직접 CSV(경기).
+		var err error
+		switch strings.ToLower(filepath.Ext(base)) {
+		case ".zip":
+			err = loadNested(ctx, pool, f, stats)
+		case ".csv":
+			err = loadCSVEntry(ctx, pool, f, stats)
+		}
+		if err != nil {
 			return stats, fmt.Errorf("%s: %w", base, err)
 		}
 	}
@@ -110,9 +118,9 @@ func Load(ctx context.Context, pool *pgxpool.Pool, bundlePath string) (*Stats, e
 	return stats, nil
 }
 
-// dateOf는 "AL_D195_11_20260519(.zip)"에서 8자리 날짜를 뽑는다.
+// dateOf는 "AL_D195_11_20260519.(zip|csv)"에서 8자리 날짜를 뽑는다.
 func dateOf(name string) string {
-	name = strings.TrimSuffix(name, ".zip")
+	name = strings.TrimSuffix(name, filepath.Ext(name)) // .zip 또는 .csv
 	i := strings.LastIndexByte(name, '_')
 	if i < 0 {
 		return ""
@@ -124,6 +132,7 @@ func dateOf(name string) string {
 	return d
 }
 
+// loadNested는 중첩 zip을 임시 해제해 그 안의 CSV를 적재한다(서울 형태).
 func loadNested(ctx context.Context, pool *pgxpool.Pool, f *zip.File, stats *Stats) error {
 	tmp, err := writeTemp(f)
 	if err != nil {
@@ -150,8 +159,22 @@ func loadNested(ctx context.Context, pool *pgxpool.Pool, f *zip.File, stats *Sta
 		return err
 	}
 	defer rc.Close()
+	return loadCSVReader(ctx, pool, rc, stats)
+}
 
-	cr := csv.NewReader(transform.NewReader(rc, korean.EUCKR.NewDecoder()))
+// loadCSVEntry는 외부 zip 안의 CSV 엔트리를 직접 적재한다(경기 형태 — 중첩 없음).
+func loadCSVEntry(ctx context.Context, pool *pgxpool.Pool, f *zip.File, stats *Stats) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	return loadCSVReader(ctx, pool, rc, stats)
+}
+
+// loadCSVReader는 CP949 CSV 스트림을 파싱해 lf_stg에 CopyFrom한다.
+func loadCSVReader(ctx context.Context, pool *pgxpool.Pool, r io.Reader, stats *Stats) error {
+	cr := csv.NewReader(transform.NewReader(r, korean.EUCKR.NewDecoder()))
 	cr.FieldsPerRecord = -1
 	cr.ReuseRecord = true
 	cr.LazyQuotes = true

@@ -240,8 +240,9 @@ Phase 0~7 전체 완료 (2026-08-02). todo 50/50 [x]. 변경 요약과 남은 �
   분할하는데 extract()가 1벌만 처리 → 8개 도 영구 1M 상한. 전 shapefile 처리로 수정.
 
 ### 남은 이슈 (후속)
-1. **감정평가 지역 확장**: 개별공시지가·토지특성 현재 **서울만**. 타 시군구는 실물 확보 시 동일 로더
-   (`individual-price`/`land-features`)로 확장 — 미적재는 REGION_NOT_LOADED로 정상 응답.
+1. **감정평가 지역 확장**: 개별공시지가·토지특성 현재 **서울·경기(41)**(2026-08-02 경기 확장,
+   각 ~4.9M행). 타 시군구는 실물 확보 시 동일 로더(`individual-price`/`land-features`)로 upsert 확장 —
+   미적재는 REGION_NOT_LOADED. landfeature 로더는 중첩 zip(서울)·직접 CSV(경기) 양형태 지원.
 2. **광주-전남 크로스정합**: land_use_plan은 통합後(sido 12), parcels/admin_areas는 통합前(29/46)라
    해당 지역 PNU 크로스조회 불일치. **통합後 연속지적도·법정동코드 발행 시 갱신 필요**.
 3. **TC-V**: 감정평가 6종 엔드포인트 테스트케이스(docs/05_TestCases) 증보 미완.
