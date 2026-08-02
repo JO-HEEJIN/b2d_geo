@@ -15,8 +15,10 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/entrance"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/jijeok"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/juso"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landfeature"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landsales"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landuse"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/officialprice"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/standardlots"
@@ -88,6 +90,16 @@ func main() {
 	case "land-use":
 		if err := runLandUse(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "land-use failed:", err)
+			os.Exit(1)
+		}
+	case "individual-price":
+		if err := runIndividualPrice(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "individual-price failed:", err)
+			os.Exit(1)
+		}
+	case "land-features":
+		if err := runLandFeatures(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "land-features failed:", err)
 			os.Exit(1)
 		}
 	case "juso":
@@ -301,6 +313,42 @@ func runLandUse(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("land-use: files=%d rows=%d final=%d skipped=%d\n",
 		stats.Files, stats.Rows, stats.Final, stats.Skipped)
+	return nil
+}
+
+// runIndividualPrice: b2d-etl individual-price <AL_D151 개별공시지가.zip> — 개별공시지가 적재(멱등 upsert).
+func runIndividualPrice(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: b2d-etl individual-price <AL_D151_개별공시지가.zip>")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	stats, err := officialprice.Load(ctx, pool, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("individual-price: rows=%d final=%d skipped=%d\n", stats.Rows, stats.Final, stats.Skipped)
+	return nil
+}
+
+// runLandFeatures: b2d-etl land-features <토지특성정보.zip> — 토지특성 최신 날짜분 적재(멱등 upsert).
+func runLandFeatures(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: b2d-etl land-features <토지특성정보.zip>")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	stats, err := landfeature.Load(ctx, pool, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("land-features: rows=%d final=%d skipped=%d\n", stats.Rows, stats.Final, stats.Skipped)
 	return nil
 }
 

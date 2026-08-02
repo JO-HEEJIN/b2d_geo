@@ -740,3 +740,16 @@ usage 경로에만 매핑되므로 다른 엔드포인트 격리(realestate→ge
 15,426.1 = +0.27%). 도형↔공부 미세차는 정상(측량 반올림). 수원(신규 적재 경기)이 거의 완전일치라
 5-1 다중 shapefile 픽스로 채운 필지의 지오메트리 정확성까지 확인됨. PNU는 토지이음에 잘 안 뜨지만
 법정동코드+본번+부번 조립이라 지목·지번·면적 일치로 필지 동일 확정.
+
+**개별공시지가·토지특성 ETL + land-features 엔드포인트 (2026-08-02, Phase 7-2/7-3 완성).**
+사용자가 서울(sido 11) 실물 확보: 개별공시지가 AL_D151(단일 CSV), 토지특성 AL_D195(중첩 zip 3날짜).
+land-use 교훈대로 **코드 짜기 전 CSV 헤더 실측** → 컬럼 확정. 매핑 판단: land_features.land_use ←
+**토지이용상황(col17, "상업기타"·"연립")** 이지 용도지역이 아님(용도지역/지구는 이미 land_use_plan).
+doc07이 토지특성 4속성을 "토지이용상황·지형고저·지형형상·도로접면"으로 명시 → 4필드 1:1. **원값 한글
+라벨 그대로 적재**(재분류 금지). 로더 2종(officialprice·landfeature): UNLOGGED staging + CopyFrom(CP949)
++ INSERT ON CONFLICT(pnu,base_year) DO UPDATE — **지역선택 적재라 TRUNCATE 금지**(다른 지역 보존).
+파티션 테이블(official_land_prices)에 ON CONFLICT 정상 작동(base_year가 파티션키+PK). 적재: 개별공시지가
+887,699행·토지특성 888,806행(서울, skipped 극소). land-features 엔드포인트는 appraisalLandUse 패턴
+(PNU 검증 → 조회 → 미적재 시 substr(pnu,1,5) EXISTS로 REGION_NOT_LOADED 422). E2E: 서울시청 필지
+개별공시지가 65,730,000원/㎡ INDIVIDUAL 활성·토지특성 상업기타/평지/세로장방/광대소각·수원(미적재)
+REGION_NOT_LOADED. openapi 15 paths(appraisal 6종 문서화). 7-2/7-3 완성. 잔여: 다른 시군구 확장·7-4 실무대조.

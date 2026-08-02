@@ -404,6 +404,95 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "502": { $ref: "#/components/responses/BadGateway" }
 
+  /v1/appraisal/standard-lots:
+    get:
+      summary: 표준지공시지가 거리순 조회 (realestate scope)
+      operationId: appraisalStandardLots
+      description: 좌표 반경 내 표준지를 거리순으로 반환(사실 반환). use_zone/land_category/land_use 원값 필터.
+      parameters:
+        - { name: lon, in: query, required: true, schema: { type: number, format: double } }
+        - { name: lat, in: query, required: true, schema: { type: number, format: double } }
+        - { name: radius, in: query, required: false, description: "반경(m), 기본 2000, 1..10000", schema: { type: integer, default: 2000 } }
+        - { name: base_year, in: query, required: false, schema: { type: integer } }
+        - { name: use_zone, in: query, required: false, schema: { type: string } }
+        - { name: land_category, in: query, required: false, schema: { type: string } }
+        - { name: land_use, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer } }
+      responses:
+        "200":
+          description: 거리순 표준지 목록
+          content:
+            application/json:
+              schema: { type: object, properties: { count: { type: integer }, items: { type: array, items: { type: object } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/appraisal/official-price:
+    get:
+      summary: 공시지가 조회 — 개별 우선, 없으면 표준지 (realestate scope)
+      operationId: appraisalOfficialPrice
+      description: |
+        PNU의 공시지가 반환. 개별공시지가가 있으면 price_type=INDIVIDUAL, 없고 표준지가 있으면
+        STANDARD. 개별 미적재 시군구는 422 REGION_NOT_LOADED (표준지도 없을 때).
+      parameters:
+        - { name: pnu, in: query, required: true, schema: { type: string, minLength: 19, maxLength: 19 } }
+        - { name: base_year, in: query, required: false, schema: { type: integer } }
+      responses:
+        "200":
+          description: 공시지가
+          content:
+            application/json:
+              schema: { type: object, properties: { pnu: { type: string }, base_year: { type: integer }, price_per_sqm: { type: integer, format: int64 }, price_type: { type: string, enum: [INDIVIDUAL, STANDARD] } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { description: "개별공시지가 미적재 지역 (REGION_NOT_LOADED)" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/appraisal/land-use:
+    get:
+      summary: 토지이용계획(용도지역·지구·구역) 조회 (realestate scope)
+      operationId: appraisalLandUse
+      description: PNU의 용도지역/지구/구역 + 원자료 사전판정 관계(포함/저촉/접함) 반환. 저촉 면적비는 원자료 미제공.
+      parameters:
+        - { name: pnu, in: query, required: true, schema: { type: string, minLength: 19, maxLength: 19 } }
+      responses:
+        "200":
+          description: 용도지역/지구/구역 목록
+          content:
+            application/json:
+              schema: { type: object, properties: { pnu: { type: string }, count: { type: integer }, zones: { type: array, items: { type: object, properties: { zone_code: { type: string }, zone_name: { type: string }, relation: { type: string } } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { description: "토지이용계획 미적재 지역 (REGION_NOT_LOADED)" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/appraisal/land-features:
+    get:
+      summary: 토지특성(이용상황·지형·도로접면) 조회 (realestate scope)
+      operationId: appraisalLandFeatures
+      description: PNU의 토지특성(토지이용상황·지형높이·지형형상·도로접면)을 원값 라벨 그대로 반환(재분류 없음). 미적재 시 422.
+      parameters:
+        - { name: pnu, in: query, required: true, schema: { type: string, minLength: 19, maxLength: 19 } }
+        - { name: base_year, in: query, required: false, schema: { type: integer } }
+      responses:
+        "200":
+          description: 토지특성 (원값 라벨)
+          content:
+            application/json:
+              schema: { type: object, properties: { pnu: { type: string }, base_year: { type: integer }, land_use: { type: string }, terrain_height: { type: string }, terrain_shape: { type: string }, road_side: { type: string }, source_version: { type: string } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { description: "토지특성 미적재 지역 (REGION_NOT_LOADED)" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
 components:
   securitySchemes:
     ApiKeyAuth:

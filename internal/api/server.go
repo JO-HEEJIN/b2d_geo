@@ -54,6 +54,7 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	mux.HandleFunc("GET /v1/appraisal/standard-lots", s.appraisalStandardLots)
 	mux.HandleFunc("GET /v1/appraisal/official-price", s.appraisalOfficialPrice)
 	mux.HandleFunc("GET /v1/appraisal/land-use", s.appraisalLandUse)
+	mux.HandleFunc("GET /v1/appraisal/land-features", s.appraisalLandFeatures)
 
 	// Phase 4 미들웨어 체인: IP rate limit → auth → key rate limit → meter
 	// → handler. IP 제한이 최외곽이라 미인증 플러드도 막는다 (QA MED-1).
@@ -622,6 +623,57 @@ func (s *Server) appraisalLandUse(w http.ResponseWriter, r *http.Request) {
 		"zones": zones,
 		"note":  "관계는 원자료 사전판정(포함/저촉/접함); 저촉 면적비(%)는 원자료 미제공",
 	})
+}
+
+// ---- 토지특성 (land_features, 필지별 이용상황·지형·도로접면 사실 반환) ----
+
+// appraisalLandFeatures는 PNU의 토지특성(토지이용상황·지형고저·지형형상·도로접면)을
+// 원값 라벨 그대로 돌려준다. base_year 미지정 시 최신. 재분류/보정 없음(사실 반환).
+func (s *Server) appraisalLandFeatures(w http.ResponseWriter, r *http.Request) {
+	pnu := r.URL.Query().Get("pnu")
+	if len(pnu) != 19 || !allDigits(pnu) {
+		writeErr(w, http.StatusBadRequest, "pnu must be 19 digits")
+		return
+	}
+	baseYear := atoiDefault(r.URL.Query().Get("base_year"), 0)
+	var out struct {
+		PNU           string `json:"pnu"`
+		BaseYear      int    `json:"base_year"`
+		LandUse       string `json:"land_use"`       // 토지이용상황 (원값)
+		TerrainHeight string `json:"terrain_height"` // 지형높이 (원값)
+		TerrainShape  string `json:"terrain_shape"`  // 지형형상 (원값)
+		RoadSide      string `json:"road_side"`      // 도로접면 (원값)
+		SourceVersion string `json:"source_version"`
+	}
+	var sv time.Time
+	err := s.Pool.QueryRow(r.Context(),
+		`SELECT base_year, land_use, terrain_height, terrain_shape, road_side, source_version
+		 FROM land_features WHERE pnu=$1 AND ($2=0 OR base_year=$2) ORDER BY base_year DESC LIMIT 1`,
+		pnu, baseYear).Scan(&out.BaseYear, &out.LandUse, &out.TerrainHeight, &out.TerrainShape, &out.RoadSide, &sv)
+	switch {
+	case err == pgx.ErrNoRows:
+		// 미적재 시군구면 404가 아니라 REGION_NOT_LOADED (지역선택 적재 중).
+		var regionLoaded bool
+		if e := s.Pool.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM land_features WHERE substr(pnu,1,5)=$1)`, pnu[:5]).Scan(&regionLoaded); e != nil {
+			writeErr(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		if !regionLoaded {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"error": map[string]string{"code": "REGION_NOT_LOADED", "message": "토지특성 미적재 지역"},
+			})
+			return
+		}
+		writeErr(w, http.StatusNotFound, "no land features for this pnu")
+		return
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	out.PNU = pnu
+	out.SourceVersion = sv.Format("2006-01-02")
+	writeJSON(w, http.StatusOK, out)
 }
 
 func atoiDefault(s string, def int) int {
