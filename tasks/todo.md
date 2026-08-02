@@ -194,12 +194,14 @@
       (PNU→용도지역/지구/구역+포함/저촉/접함)·**land-features(PNU→이용상황·지형·도로접면 원값)**.
       전부 DB-backed 사실반환 + RealEstate scope(geo키 403). **OpenAPI 증보 완료(15 paths,
       appraisal 6종)**. E2E: 서울 INDIVIDUAL 활성·land-features 정상·미적재 REGION_NOT_LOADED. 잔여: TC-V.
-- [>] 7-4. 독립 b2d-qa 감사 완료·PASS (2026-07-28): 판단로직 부재·보안(SQLi/키유출/
+- [x] 7-4. 독립 b2d-qa 감사 완료·PASS (2026-07-28): 판단로직 부재·보안(SQLi/키유출/
       scope/에러누출/입력검증)·데이터무결성 3요소 CLEAN. 실이슈 수정: official-price
       표준지우선+REGION_NOT_LOADED(스펙 §4), bbox /80000, lat/lng 범위검증. 남음:
-      실무 시나리오 전구간 정부서비스 교차대조(realtyprice.kr/eum.go.kr — 나머지
-      엔드포인트 land-use/land-features 완성 + 브라우저 필요).
-- [ ] 7-5. learning_log.md Phase 7 기록, gitnexus 재인덱싱
+      실무 시나리오 전구간 정부서비스 교차대조 — **완료 (2026-08-02)**: 서울 실주소 2건
+      (세종대로 시청·역삼동 838) 토지이음 확인서 대조. geocode→parcel→공시지가→용도지역 전구간,
+      **개별공시지가 원단위 완전일치**(65,730,000·58,300,000), 용도지역 전항목 일치, 지목 대 일치.
+- [x] 7-5. 완료 (2026-08-02): Phase 7 기록(land-use 전국·전남광주통합시·개별공시지가·토지특성·
+      7-4 정부대조 learning_log 반영) + gitnexus 재인덱싱(1,477 nodes/2,613 edges/92 flows).
 
 ## Review
 
