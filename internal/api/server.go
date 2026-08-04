@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/parcel"
 	"github.com/JO-HEEJIN/b2d_geo/internal/places"
 	"github.com/JO-HEEJIN/b2d_geo/internal/revgeo"
+	"github.com/JO-HEEJIN/b2d_geo/web"
 )
 
 // Server는 최소 API 서버다.
@@ -62,8 +64,24 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	authr := auth.NewAuthenticator(pool)
 	limiter := auth.NewRateLimiter()
 	m := meter.New(pool)
-	h := limiter.IPMiddleware(authr.Middleware(limiter.Middleware(m.Middleware(mux))))
-	return h, m.Close
+	apiChain := limiter.IPMiddleware(authr.Middleware(limiter.Middleware(m.Middleware(mux))))
+
+	// /v1/*는 인증·계측 체인을 타고, 그 외 경로는 임베드된 정적 사이트(랜딩·지도
+	// 데모·API 문서)를 same-origin으로 서빙한다. 프론트가 API와 같은 오리진이라
+	// CORS가 불필요하고, 바이너리 하나로 사이트+API를 함께 배포한다.
+	root := http.NewServeMux()
+	root.Handle("/v1/", apiChain)
+	// 프론트에 API 베이스와 데모 키를 런타임에 주입한다. 데모 키는 저장소가 아닌
+	// 환경변수(B2D_DEMO_API_KEY)에 두어 git에 시크릿이 남지 않게 한다. 이 키는
+	// 공개 데모용(좁은 scope + 낮은 rate limit)이라 노출을 전제로 운용한다.
+	root.HandleFunc("GET /config.json", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"apiBase": "/v1",
+			"demoKey": os.Getenv("B2D_DEMO_API_KEY"),
+		})
+	})
+	root.Handle("/", http.FileServerFS(web.Assets))
+	return root, m.Close
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
