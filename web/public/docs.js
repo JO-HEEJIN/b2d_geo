@@ -185,6 +185,37 @@ function esc(s) {
   );
 }
 
+// ---- 셀프 데모 키 발급(운영자가 켰을 때만 노출) ----
+B2D_CONFIG.then((cfg) => {
+  if (!cfg.selfServe) return;
+  const box = document.getElementById("issueBox");
+  box.hidden = false;
+  document.getElementById("issueBtn").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    const out = document.getElementById("issueOut");
+    btn.disabled = true;
+    out.innerHTML = `<span class="muted"><span class="spin"></span>발급 중…</span>`;
+    try {
+      const res = await fetch("/issue-demo-key", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) throw new Error((body && body.error && (body.error.message || body.error)) || "발급 실패");
+      out.innerHTML =
+        `<div class="issued"><code id="issuedKey">${esc(body.key)}</code>` +
+        `<button class="btn ghost" id="copyKey">복사</button></div>` +
+        `<p class="muted" style="margin:8px 0 0">${esc(body.note || "")} 이 키는 다시 표시되지 않으니 안전하게 보관하세요.</p>`;
+      document.getElementById("copyKey").addEventListener("click", () => {
+        navigator.clipboard.writeText(body.key).then(() => {
+          document.getElementById("copyKey").textContent = "복사됨 ✓";
+        });
+      });
+    } catch (e) {
+      out.innerHTML = `<span class="err-line">${esc(e.message)}</span>`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+
 // ---- 요금제(문서 하단) ----
 document.getElementById("pricing").innerHTML = `
   <h3>요금제</h3>

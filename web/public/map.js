@@ -63,7 +63,9 @@ async function queryPoint(lat, lon, opts = {}) {
     more += renderPrice(price);
     more += renderFeatures(features);
     more += renderLandUse(landUse);
+    more += renderDeep(parcelData);
     document.getElementById("more").outerHTML = more;
+    wireDeep(parcelData);
   } else {
     document.getElementById("more").outerHTML =
       `<div class="card"><div class="body muted">이 지점에서 필지를 찾지 못했습니다. 건물·도로·하천 위이거나 적재되지 않은 지역일 수 있습니다.</div></div>`;
@@ -166,6 +168,99 @@ function renderLandUse(lu) {
 function card404(title, msg) {
   return `<div class="card"><header>${esc(title)}</header><div class="body muted">${esc(msg)}</div></div>`;
 }
+
+// ---------- 심화 데이터: 실거래 + 지가변동률 ----------
+const ZONE_CLASSES = ["주거지역", "상업지역", "공업지역", "녹지지역"];
+
+function renderDeep(p) {
+  const sgg = (p.bcode || "").slice(0, 5);
+  if (sgg.length !== 5) return "";
+  const zopts = ZONE_CLASSES.map((z) => `<option value="${z}">${z}</option>`).join("");
+  return `<div class="card"><header>실거래 <span class="tag mono">시군구 ${esc(sgg)}</span></header><div class="body">
+      <div class="deep-ctl">
+        <input id="salesYm" value="202401" maxlength="6" size="6" inputmode="numeric" aria-label="거래월 YYYYMM">
+        <button class="btn" id="salesGo">조회</button>
+      </div>
+      <div id="salesOut" class="muted">거래월(YYYYMM)을 입력하고 조회하세요.</div>
+    </div></div>
+    <div class="card"><header>지가변동률 <span class="tag mono">${esc(sgg)}</span></header><div class="body">
+      <div class="deep-ctl">
+        <select id="ziClass" aria-label="용도지역">${zopts}</select>
+        <span class="muted">월별 변동률(%)</span>
+      </div>
+      <div id="ziOut" class="muted"><span class="spin"></span></div>
+    </div></div>`;
+}
+
+function wireDeep(p) {
+  const sgg = (p.bcode || "").slice(0, 5);
+  if (sgg.length !== 5) return;
+  const salesGo = document.getElementById("salesGo");
+  if (salesGo) salesGo.addEventListener("click", () => loadSales(sgg));
+  const ziClass = document.getElementById("ziClass");
+  if (ziClass) {
+    ziClass.addEventListener("change", () => loadPriceIndex(sgg, ziClass.value));
+    loadPriceIndex(sgg, ziClass.value); // 최초 자동 로드
+  }
+}
+
+async function loadSales(sgg) {
+  const ym = (document.getElementById("salesYm").value || "").trim();
+  const box = document.getElementById("salesOut");
+  if (!/^\d{6}$/.test(ym)) { box.innerHTML = `<span class="err-line">YYYYMM 형식으로 입력하세요.</span>`; return; }
+  box.innerHTML = `<span class="spin"></span>조회 중…`;
+  try {
+    const r = await api("/appraisal/sales", { lawd_cd: sgg, deal_ymd: ym });
+    const items = r.items || [];
+    if (!items.length) { box.innerHTML = `<span class="muted">${ym}에 조회된 실거래가 없습니다.</span>`; return; }
+    const rows = items.slice(0, 8).map((it) =>
+      `<div class="sales-row">
+        <span class="amt">${formatManwon(it.deal_amount_manwon)}</span>
+        <span>${esc(it.jimok || "")} ${esc(it.deal_area_m2 || "")}㎡</span>
+        <span class="meta">${esc(it.umd_nm || "")} · ${it.deal_month}/${it.deal_day}</span>
+      </div>`).join("");
+    const more = items.length > 8 ? `<div class="zone-more">외 ${items.length - 8}건</div>` : "";
+    box.innerHTML = `<div class="muted" style="margin-bottom:6px">${items.length}건</div>${rows}${more}`;
+  } catch (e) {
+    box.innerHTML = `<span class="err-line">${esc(e.message)}</span>`;
+  }
+}
+
+async function loadPriceIndex(sgg, cls) {
+  const box = document.getElementById("ziOut");
+  box.innerHTML = `<span class="spin"></span>`;
+  try {
+    const r = await api("/appraisal/price-index", { sigungu: sgg, use_zone_class: cls });
+    const series = (r.series || []).filter((s) => s.rate_pct != null);
+    if (!series.length) { box.innerHTML = `<span class="muted">해당 용도지역 데이터가 없습니다.</span>`; return; }
+    box.innerHTML = sparkline(series);
+  } catch (e) {
+    box.innerHTML = `<span class="err-line">${esc(e.message)}</span>`;
+  }
+}
+
+// 의존성 없는 SVG 스파크라인(월별 변동률%). 0선 기준 area+line.
+function sparkline(series) {
+  const W = 320, H = 56, pad = 4;
+  const vals = series.map((s) => s.rate_pct);
+  const min = Math.min(0, ...vals), max = Math.max(0, ...vals);
+  const span = max - min || 1;
+  const x = (i) => pad + (i * (W - 2 * pad)) / Math.max(1, series.length - 1);
+  const y = (v) => H - pad - ((v - min) / span) * (H - 2 * pad);
+  const pts = series.map((s, i) => `${x(i).toFixed(1)},${y(s.rate_pct).toFixed(1)}`);
+  const area = `M${pts[0]} L${pts.join(" L")} L${x(series.length - 1).toFixed(1)},${y(min).toFixed(1)} L${x(0).toFixed(1)},${y(min).toFixed(1)} Z`;
+  const last = series[series.length - 1];
+  return `<div class="spark-wrap">
+    <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="지가변동률 추이">
+      <path class="ar" d="${area}"/>
+      <polyline class="ln" points="${pts.join(" ")}"/>
+      <circle class="dot" cx="${x(series.length - 1).toFixed(1)}" cy="${y(last.rate_pct).toFixed(1)}" r="2.5"/>
+    </svg>
+    <div class="spark-cap"><span>${esc(fmtMonth(series[0].month))}</span>
+      <span>최근 ${last.rate_pct > 0 ? "+" : ""}${last.rate_pct}% (${esc(fmtMonth(last.month))})</span></div>
+  </div>`;
+}
+function fmtMonth(m) { const s = String(m); return s.length === 6 ? `${s.slice(0, 4)}.${s.slice(4)}` : s; }
 
 // ---------- 오버레이(주변 상가 / 표준지) ----------
 async function refreshOverlays() {
