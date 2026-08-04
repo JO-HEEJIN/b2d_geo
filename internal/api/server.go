@@ -75,13 +75,41 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	// 환경변수(B2D_DEMO_API_KEY)에 두어 git에 시크릿이 남지 않게 한다. 이 키는
 	// 공개 데모용(좁은 scope + 낮은 rate limit)이라 노출을 전제로 운용한다.
 	root.HandleFunc("GET /config.json", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"apiBase": "/v1",
-			"demoKey": os.Getenv("B2D_DEMO_API_KEY"),
+		writeJSON(w, http.StatusOK, map[string]any{
+			"apiBase":   "/v1",
+			"demoKey":   os.Getenv("B2D_DEMO_API_KEY"),
+			"selfServe": os.Getenv("B2D_SELF_SERVE_DEMO") == "true",
 		})
 	})
+	// 셀프 데모키 발급(선택 기능). 운영자가 B2D_SELF_SERVE_DEMO=true로 켤 때만
+	// 노출한다. geo scope + 낮은 rate의 무료 티어 키를 만들어 개발자 온보딩을 돕는다
+	// (감정평가 계열은 realestate scope가 필요한 유료 티어). IP rate limit(최외곽)로
+	// 남용을 막지만, 공개 키 발급은 본질적으로 DB에 행을 쌓으므로 데모/미리보기
+	// 환경에서만 켜는 것을 전제로 한다.
+	if os.Getenv("B2D_SELF_SERVE_DEMO") == "true" {
+		root.Handle("POST /issue-demo-key", limiter.IPMiddleware(http.HandlerFunc(s.issueDemoKey)))
+	}
 	root.Handle("/", http.FileServerFS(web.Assets))
 	return root, m.Close
+}
+
+// issueDemoKey는 geo scope + 낮은 rate의 무료 데모 키를 발급한다. 평문은 이 응답에서
+// 1회만 노출된다(DB에는 해시만 저장). B2D_SELF_SERVE_DEMO=true일 때만 라우팅된다.
+func (s *Server) issueDemoKey(w http.ResponseWriter, r *http.Request) {
+	const rateRPS = 2
+	id, plaintext, prefix, err := auth.CreateAPIKey(r.Context(), s.Pool, "self-serve-demo", []string{"geo"}, rateRPS)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "key issue failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":             id,
+		"key":            plaintext,
+		"prefix":         prefix,
+		"scopes":         []string{"geo"},
+		"rate_limit_rps": rateRPS,
+		"note":           "geo scope(지오코딩·필지)만 포함. 감정평가 계열은 realestate scope 유료 키가 필요합니다.",
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
