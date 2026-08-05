@@ -1,0 +1,17 @@
+# Caddy 리버스 프록시 — {$DOMAIN}에 대해 Let's Encrypt TLS를 자동 발급/갱신한다.
+# 앱은 같은 compose 네트워크의 app:8080. HTTP는 HTTPS로 자동 리다이렉트.
+
+{$DOMAIN} {
+	encode gzip zstd
+
+	reverse_proxy app:8080
+
+	# 정적 자산 캐시(해시 없는 파일이라 보수적으로). API 응답은 앱이 제어.
+	@static path /vendor/* /styles.css /*.js
+	header @static Cache-Control "public, max-age=3600"
+
+	log {
+		output stdout
+		format console
+	}
+}

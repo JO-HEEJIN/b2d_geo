@@ -90,7 +90,20 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 		root.Handle("POST /issue-demo-key", limiter.IPMiddleware(http.HandlerFunc(s.issueDemoKey)))
 	}
 	root.Handle("/", http.FileServerFS(web.Assets))
-	return root, m.Close
+	return secureHeaders(root), m.Close
+}
+
+// secureHeaders는 모든 응답(API·정적)에 기본 보안 헤더를 붙인다. 지도 타일(외부
+// 이미지)과 index.html의 소형 인라인 스크립트를 깨뜨리지 않도록 엄격한 CSP는 두지
+// 않고, 안전한 기본값만 설정한다.
+func secureHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // issueDemoKey는 geo scope + 낮은 rate의 무료 데모 키를 발급한다. 평문은 이 응답에서
