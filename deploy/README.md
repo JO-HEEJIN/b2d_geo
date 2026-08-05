@@ -7,6 +7,23 @@ VPS 하나에 **PostGIS + 앱(API+웹) + Caddy(자동 HTTPS)**를 docker-compose
 DNS ──> [VPS] ── Caddy(443, 자동 TLS) ──> app:8080 ──> PostGIS(내부)
 ```
 
+## 권장 프로바이더 — AWS Lightsail 서울 리전
+
+토지 데이터는 한국 사용자를 향하므로 **서울 리전(ap-northeast-2)**이 지연 면에서
+유리하다. Lightsail은 고정 요금 + 정적 IP·DNS·스냅샷·방화벽이 내장돼 단일 VPS
+운영이 가장 단순하다.
+
+- **인스턴스**: Ubuntu 22.04, **8GB RAM / 2 vCPU / 160GB SSD** (월 약 $44).
+  160GB가 전체 DB 61GB + 인덱스 + WAL을 수용하고, 8GB RAM이 공간쿼리 성능을 낸다.
+  (4GB/80GB 플랜은 디스크가 부족하다.)
+- **네트워킹**: 정적 IP 연결(Attach static IP). 방화벽에서 **HTTP(80)·HTTPS(443)**
+  인바운드 규칙 추가(기본 22만 열려 있음).
+- **DNS**: Lightsail DNS zone(또는 Route 53)에서 `A` 레코드 → 정적 IP.
+- **백업**: Lightsail 자동 스냅샷 켜기(디스크 전체 스냅샷).
+
+접속 후 아래 1~9를 그대로 따르면 된다(어느 Ubuntu VPS에서도 동일하게 동작한다 —
+Vultr/라이트로드/Naver Cloud 등도 서울 리전 + 위 사양이면 대체 가능).
+
 ## 0. 준비물 체크
 
 - [ ] VPS: **디스크 100GB+**, **RAM 8GB**(최소 4GB), 2 vCPU+. Ubuntu 22.04/24.04 권장.
