@@ -784,3 +784,31 @@ prefix+'0'×14 AND prefix+'9'×14`(PK 범위)로 교체 → **Index Only Scan 0.
 TC-V 나머지: V08 cumulative 누적 0.5147% 수기검산 일치, V09 코드에 금지 판단로직 0건, V10 scope 403,
 V06 거리순+점수필드 부재 — 전부 통과. **TC-V가 실버그를 잡음(설계TC 실행의 가치).** V03/V07은 Option A
 대체(use_zones 미사용, 저촉 면적비 미제공), V04/V05는 rt.molit 브라우저 대상.
+
+---
+
+## 2026-08-06 — 웹 프론트·전국 배포·M1 이전 준비 (Opus 4.8 세션)
+
+### 웹 프론트 + 공개 배포 (b2d_geo API 실서비스화)
+- **프론트 3종 + 배포**: `b2d-server`가 API(`/v1`)와 정적 사이트를 같은 오리진에서 서빙(embed).
+  랜딩(`/`)·지도데모(`/map.html`, Leaflet+필지폴리곤·공시지가·용도지역·토지특성·실거래·표준지)·
+  API문서(`/docs.html`, try-it-out+셀프키발급)·배치(`/batch.html`). PR #1~#6 머지, main green.
+- **VPS 배포**: AWS Lightsail 서울(3.35.88.130, 8GB/2vCPU/160GB) + docker-compose(db+app+caddy)
+  + Cloudflare DNS(api.birth2death.com, 회색구름) + Caddy 자동 TLS. **전국 61GB 라이브.**
+  운영/인수인계 문서 = `deploy/OPS.md`, `deploy/README.md`.
+- **잡은 실버그**: (1) `.dockerignore` allowlist에 `web` 누락 → embed용 web/이 빌드컨텍스트서
+  빠져 이미지 빌드 실패(호스트 go build로는 안 잡힘). (2) x/text GO-2026-5970 취약점 → v0.39.0.
+- **복원 교훈**: pg_restore를 `docker compose exec -T`(attached)로 돌리면 SSH 끊길 때 딸려 죽어
+  좀비 워커 잔존 → **detached(`exec -d`)로 돌려야 세션 무관하게 완주.** 2vCPU에 `--jobs=4`는
+  I/O·IPC 과경합 → 마지막 text btree(idx_buildings_norm_road)가 병렬로 수시간 헛돎 → **단일스레드
+  재빌드가 정답.** 전국 각지(부산·광주·제주 등) 실호출로 데이터 완전성 검증.
+
+### M1 이전 + 대용량 백업 (77GB → clone 4.5MB)
+- **핵심**: 저장소는 4.5MB(코드), 나머지 77GB는 전부 gitignore된 재생성 가능 데이터.
+  M1(20GB)엔 clone만 하면 되지만, 사용자는 키 등 편의로 디렉토리 통째 이동 선택.
+- **ML 모델(진짜 소중, 재생성 불가)**: DEIMv2-M 주력(best_stg2.pth 280M, val mAP 0.161) + v2 +
+  YOLO11m 베이스라인(로컬 MPS ~39h) → **HF 비공개 백업 `momoJo/b2d-bridge-detection`.** 전부 검증.
+- **74GB(AI Hub 040·변환이미지·ETL data)**: 전부 공개 재다운 가능 → **삭제 결정**(R2 업로드 대신).
+  재다운·재훈련 문서 = `detection/RESTORE.md`(ML), `docs/10_Data_Reacquisition_b2d_geo.md`(ETL).
+- 교훈: 백업 대상 선별 = "재생성 불가한 것만"(모델 1.5GB). 재생성 가능 공개데이터(74GB)는
+  출처만 문서화하고 삭제. DB는 이미 VPS에 있어 ETL 원본 불필요(스냅샷 복제가 재적재보다 빠름).
