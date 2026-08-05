@@ -1,0 +1,77 @@
+# b2d_geo 단일 VPS 배포 스택: PostGIS + 앱(API+웹) + Caddy(자동 HTTPS).
+# 사용법은 deploy/README.md 참고. 값은 deploy/.env로 주입한다.
+#
+#   cd deploy && cp .env.example .env && vi .env
+#   docker compose up -d
+#
+name: b2d-geo
+
+services:
+  db:
+    image: postgis/postgis:16-3.4 # 원본 DB와 동일 버전(복원 호환)
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-b2d}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?deploy/.env에 POSTGRES_PASSWORD를 설정하세요}
+      POSTGRES_DB: ${POSTGRES_DB:-b2d_geo}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # 공간 워크로드 튜닝(디스크 100GB+ / RAM 8GB VPS 기준). VPS 스펙에 맞게 조정.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=6GB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - work_mem=64MB
+      - -c
+      - max_wal_size=4GB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-b2d} -d ${POSTGRES_DB:-b2d_geo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # 포트를 호스트에 노출하지 않는다(앱만 내부 네트워크로 접근). 데이터 적재는
+    # `docker compose exec`로 컨테이너 내부에서 수행한다(README 참고).
+
+  app:
+    # 기본은 CI가 GHCR에 올린 이미지. 로컬에서 직접 빌드하려면 `docker compose build`.
+    image: ghcr.io/jo-heejin/b2d_geo:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      B2D_DATABASE_URL: postgres://${POSTGRES_USER:-b2d}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-b2d_geo}?sslmode=disable
+      B2D_LISTEN: ":8080"
+      MOLIT_API_KEY: ${MOLIT_API_KEY:-}
+      B2D_DEMO_API_KEY: ${B2D_DEMO_API_KEY:-}
+      B2D_SELF_SERVE_DEMO: ${B2D_SELF_SERVE_DEMO:-false}
+    # distroless(shell·curl 없음)라 컨테이너 헬스체크는 생략한다. Caddy가 프록시하고
+    # restart 정책이 크래시를 복구하며, /v1/health로 외부 모니터링을 붙일 수 있다.
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?deploy/.env에 DOMAIN을 설정하세요}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
