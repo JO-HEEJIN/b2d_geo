@@ -92,6 +92,24 @@ git config user.name "JO-HEEJIN" && git config user.email "midmost44@gmail.com"
 - `parcels < 3970만`이면(OOM 등 불완전) 앱을 올리지 않고 `중단` 기록 → 수동 재적재 필요
   (`--jobs=1`로 재시작 권장: 2 vCPU에선 과병렬이 I/O 스로틀을 유발).
 
+## 6-1. geocode 인덱스 = HASH (btree 아님) — 알아둘 것
+
+`buildings.norm_road`의 exact-match 인덱스는 **btree가 아니라 hash**다:
+`idx_buildings_norm_road_hash` (`USING hash (norm_road)`).
+
+- **왜**: 최초 복원 때 원본 스키마의 btree `idx_buildings_norm_road`가 1,283만 텍스트
+  "sorting live tuples" 단계에서 **2시간+ 진행 0**(2 vCPU + Lightsail I/O 스로틀에서 대용량
+  텍스트 정렬이 사실상 안 끝남). geocode 쿼리(`geocode.go` 87행 `WHERE norm_road = $1`)는
+  **등호만** 쓰므로 **정렬이 없는 hash 인덱스로 충분** → **54초**에 빌드 완료.
+- **효과**: geocode 20.7s → **0.03~0.1s** (전국 검증).
+- **주의**: 스냅샷을 새 환경에 복원하면 원본 스키마의 **btree 정의가 딸려온다.** 큰 인스턴스가
+  아니면 그 btree 빌드가 또 멈출 수 있으니, 필요 시 btree 대신 위 hash로 대체한다:
+  ```sql
+  SET maintenance_work_mem='2GB';
+  CREATE INDEX idx_buildings_norm_road_hash ON buildings USING hash (norm_road);
+  ```
+  (LIKE/유사도 경로는 기존 GIN trgm 인덱스 `idx_buildings_norm_road_trgm`가 이미 처리.)
+
 ## 7. "진짜 서비스" 백로그 (M1에서 이어서)
 
 지금도 세 부류(일반인·개발자·감평사) 조회는 다 되지만, 상용화하려면:
