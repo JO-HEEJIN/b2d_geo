@@ -17,14 +17,17 @@
 
 ## 현재 상태 요약 (수동 갱신)
 
-- Phase 0~6 완료. Phase 7(감정평가) 진행 중 (2026-07-28 기준):
-  · 7-0 스키마 · 7-키 API키 · 7-1 ETL 3종(실거래·지가변동률·표준지 596k) 완료.
-  · 7-3 API 4/6(sales·price-index·standard-lots·official-price, 전부 DB-backed 사실만).
-  · 7-4 독립 b2d-qa 감사 PASS + 실이슈 수정(official-price 표준지우선+REGION_NOT_LOADED 등).
-- 다음 작업: **7-2 ETL** — 용도지역 폴리곤(UPIS)·토지특성·개별공시지가 실물 파일 확보가
-  첫 항목(juso처럼 착수 전 실물 구조 확인). 받으면 마지막 엔드포인트 2종(land-use·
-  land-features) + official-price INDIVIDUAL 자동 활성. 이어서 7-5(로그·gitnexus reindex).
-  상세는 tasks/todo.md Phase 7.
+- **Phase 0~7 전체 완료 (2026-08-02, todo 50/50).** 감정평가 API 6종 전부 DB-backed
+  운영 중: land_use_plan 전국 2.22억행, land_features·개별공시지가(서울), 표준지 596k,
+  지가변동률 18.6k. 상세는 tasks/todo.md Review 섹션.
+- 운영 유지보수 (2026-08-08): 지도 데모 버그 3종 수정(마커 404·places 400·sales 502)
+  + `/v1` 전체 X-Request-Id 에러 추적 도입 + 운영 `.env`에 MOLIT 키 투입(실거래 활성).
+  MOIS 법정동코드 API 키 확보(.env `MOIS_API_KEY`, ETL 미착수).
+- 다음 작업 후보 (승인된 계획 아님 — 착수 전 사용자와 합의):
+  · 상용화 백로그: deploy/OPS.md 7절 (결제·rate limit 실운영값·모니터링·Cloudflare).
+  · 개별공시지가/토지특성 서울 외 지역 확대 (지역선택 적재 정책).
+  · VPS GHCR pull unauthorized 해소 — PAT(read:packages)로 docker login 1회
+    (현재는 git bundle 전송 + `docker compose build app` 우회로 배포).
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
