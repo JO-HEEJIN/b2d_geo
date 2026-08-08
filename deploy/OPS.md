@@ -69,6 +69,20 @@ git config user.name "JO-HEEJIN" && git config user.email "midmost44@gmail.com"
 | `MOLIT_API_KEY` | 실거래(/v1/appraisal/sales)용 data.go.kr 키. **비면 실거래만 비활성** |
 | `B2D_DEMO_API_KEY` | 웹 try-it-out 데모 키 |
 | `B2D_SELF_SERVE_DEMO` | `true`면 개발자 셀프 키발급 노출 |
+| `SENTRY_DSN` | Sentry 에러 추적 DSN. **비면 Sentry 비활성(기존 로그만)** |
+| `SENTRY_ENVIRONMENT` | Sentry 환경 라벨 (기본 production) |
+
+### Sentry 설정·확인 (에러/panic 추적)
+
+1. sentry.io에서 프로젝트 생성(Platform: **Go**) → DSN 복사.
+2. `.env`에 `SENTRY_DSN=<dsn>` 추가 → `docker compose up -d app`(재생성; `restart`는
+   .env 변경을 안 읽음).
+3. 확인: `docker compose logs app | grep "sentry enabled"`. 즉시 이벤트로 확인하려면
+   `.env`에 `B2D_SENTRY_BOOT_PING=true`를 잠깐 넣고 재생성 — Issues에 "b2d-server
+   boot ping"이 떠야 한다(확인 후 제거).
+4. 수집 범위: 핸들러 panic(스택 포함, 500 응답으로 복구)과 5xx 응답. 이벤트 태그
+   `request_id`가 응답 헤더 `X-Request-Id`·서버 로그(`req <id>:`)와 대조된다.
+   헤더·쿼리스트링·바디·IP는 전송하지 않고, MOLIT 키는 스크러버가 치환한다.
 
 ## 5. 운영 명령 (VPS `~/b2d_geo/deploy`)
 

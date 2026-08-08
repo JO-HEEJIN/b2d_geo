@@ -53,6 +53,10 @@ services:
       MOLIT_API_KEY: ${MOLIT_API_KEY:-}
       B2D_DEMO_API_KEY: ${B2D_DEMO_API_KEY:-}
       B2D_SELF_SERVE_DEMO: ${B2D_SELF_SERVE_DEMO:-false}
+      # Sentry 에러 추적 (비면 비활성 — 서버는 기존 로그만으로 동작)
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      B2D_SENTRY_BOOT_PING: ${B2D_SENTRY_BOOT_PING:-false}
     # distroless(shell·curl 없음)라 컨테이너 헬스체크는 생략한다. Caddy가 프록시하고
     # restart 정책이 크래시를 복구하며, /v1/health로 외부 모니터링을 붙일 수 있다.
 
