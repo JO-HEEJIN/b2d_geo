@@ -22,6 +22,10 @@ info:
     ## 에러 포맷
     미들웨어(401/403/429)는 `{"error":{"code","message"}}`를 반환한다.
     핸들러 계층 오류(400/404/500/502/503)는 현재 `{"error":"<message>"}` 형태다.
+
+    ## 요청 추적
+    모든 `/v1/*` 응답에 `X-Request-Id` 헤더가 붙는다. 에러 문의 시 이 ID를
+    첨부하면 서버 로그(`req <id>: ...`)와 바로 대조할 수 있다.
 servers:
   - url: http://localhost:8080
     description: 로컬 개발 서버
@@ -184,11 +188,15 @@ paths:
     get:
       summary: 상호명 키워드 검색 (geo scope)
       operationId: placesSearch
+      description: |
+        q(2자 이상)를 주면 키워드 검색. q 없이 lat/lon만 주면 반경 내
+        근접순 목록(주변 상가 브라우즈 모드, similarity=0)을 돌려준다.
+        q와 lat/lon 둘 다 없으면 400.
       parameters:
         - name: q
           in: query
-          required: true
-          description: 검색어 (최소 2자)
+          required: false
+          description: 검색어 (최소 2자). 생략 시 lat/lon 필수(근접 브라우즈)
           schema: { type: string, minLength: 2 }
         - name: category
           in: query
@@ -375,6 +383,12 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "502": { $ref: "#/components/responses/BadGateway" }
+        "503":
+          description: MOLIT_API_KEY 미설정 — 실거래 조회 비활성
+          content:
+            application/json:
+              example:
+                error: { code: SALES_DISABLED, message: "MOLIT_API_KEY 미설정 — 실거래 조회 비활성 (운영자가 키 투입 후 재시작 필요)" }
 
   /v1/appraisal/price-index:
     get:

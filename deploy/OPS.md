@@ -117,7 +117,9 @@ git config user.name "JO-HEEJIN" && git config user.email "midmost44@gmail.com"
 1. **결제·과금** — 현재 데모키(무료)뿐. Lemon Squeezy 등 결제 연동 + 티어별 발급 자동화.
    (요금표는 `docs/08_Deployment_Pricing_b2d_geo.md`.)
 2. **rate limit 실운영값** — 티어별 rps/월한도 조정(현재 데모는 낮게).
-3. **MOLIT 키 투입** — 실거래 활성화하려면 `.env`의 `MOLIT_API_KEY` 채우고 `restart app`.
+3. **MOLIT 키 투입** — 완료(2026-08-08). `.env`에 키 투입 후 `docker compose up -d app`으로
+   재생성해야 env가 반영된다 (`restart`는 .env 변경을 다시 읽지 않음). 키가 비면 앱이
+   상류 호출 없이 503 `SALES_DISABLED`를 반환한다.
 4. **모니터링/알림** — 업타임·에러·비용 알림(Lightsail 스냅샷 백업은 켜져 있음).
 5. **Cloudflare 프록시 전환**(선택) — DDoS/캐시가 필요하면 origin 인증서 방식으로.
 

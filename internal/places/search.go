@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -60,17 +61,28 @@ func Search(ctx context.Context, pool *pgxpool.Pool, q, category string, lon, la
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Place
-	for rows.Next() {
-		var p Place
-		if err := rows.Scan(&p.Name, &p.CategoryCode, &p.RoadAddress,
-			&p.JibunAddress, &p.Point[0], &p.Point[1], &p.Similarity); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
+	return scanPlaces(rows)
+}
+
+// Nearby는 키워드 없이 (lon,lat) 반경 radius(m) 안의 상가를 가까운 순으로 돌려준다
+// (지도 "주변 상가" 오버레이용 브라우즈). KNN 정렬은 idx_places_geom(gist)을 탄다.
+// Similarity는 키워드가 없으므로 0 고정.
+func Nearby(ctx context.Context, pool *pgxpool.Pool, category string, lon, lat, radius float64, limit int) ([]Place, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
 	}
-	return out, rows.Err()
+	rows, err := pool.Query(ctx, `
+		SELECT name, COALESCE(category_code,''), COALESCE(road_address,''),
+		       COALESCE(jibun_address,''), ST_X(geom), ST_Y(geom), 0::float8
+		FROM places
+		WHERE ($1 = '' OR category_code = $1)
+		  AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($2,$3),4326)::geography, $4)
+		ORDER BY geom <-> ST_SetSRID(ST_MakePoint($2,$3),4326)
+		LIMIT $5`, category, lon, lat, radius, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanPlaces(rows)
 }
 
 // searchChoseong은 초성 질의를 choseong 컬럼에 부분일치+유사도로 매칭한다.
@@ -87,6 +99,11 @@ func searchChoseong(ctx context.Context, pool *pgxpool.Pool, q, category string,
 	if err != nil {
 		return nil, err
 	}
+	return scanPlaces(rows)
+}
+
+// scanPlaces는 (name, category, road, jibun, x, y, similarity) 행들을 Place로 읽는다.
+func scanPlaces(rows pgx.Rows) ([]Place, error) {
 	defer rows.Close()
 	var out []Place
 	for rows.Next() {

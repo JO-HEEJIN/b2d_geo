@@ -70,7 +70,8 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	// 데모·API 문서)를 same-origin으로 서빙한다. 프론트가 API와 같은 오리진이라
 	// CORS가 불필요하고, 바이너리 하나로 사이트+API를 함께 배포한다.
 	root := http.NewServeMux()
-	root.Handle("/v1/", apiChain)
+	// 요청 ID를 최외곽에 두어 rate limit·auth가 만든 에러 응답에도 ID가 붙는다.
+	root.Handle("/v1/", requestIDMiddleware(apiChain))
 	// 프론트에 API 베이스와 데모 키를 런타임에 주입한다. 데모 키는 저장소가 아닌
 	// 환경변수(B2D_DEMO_API_KEY)에 두어 git에 시크릿이 남지 않게 한다. 이 키는
 	// 공개 데모용(좁은 scope + 낮은 rate limit)이라 노출을 전제로 운용한다.
@@ -328,14 +329,11 @@ func (s *Server) reverseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// placesSearchHandler는 상호명 키워드 검색 (v0: trigram).
+// placesSearchHandler는 상호명 키워드 검색 (v0: trigram). q 없이 lat/lon만 주면
+// 반경 내 근접순 목록을 돌려준다 (지도 "주변 상가" 오버레이용 브라우즈 모드).
 func (s *Server) placesSearchHandler(w http.ResponseWriter, r *http.Request) {
 	qv := r.URL.Query()
 	q := qv.Get("q")
-	if len(q) < 2 {
-		writeErr(w, http.StatusBadRequest, "q required (2+ chars)")
-		return
-	}
 	limit, _ := strconv.Atoi(qv.Get("limit"))
 	// lon,lat 둘 다 유효할 때만 반경 필터 활성(기본 1km, 1..20km). 없으면 radius=0.
 	lon, errLon := strconv.ParseFloat(qv.Get("lon"), 64)
@@ -344,7 +342,17 @@ func (s *Server) placesSearchHandler(w http.ResponseWriter, r *http.Request) {
 	if errLon == nil && errLat == nil {
 		radius = float64(clampInt(atoiDefault(qv.Get("radius"), 1000), 1, 20000))
 	}
-	out, err := places.Search(r.Context(), s.Pool, q, qv.Get("category"), lon, lat, radius, limit)
+	var out []places.Place
+	var err error
+	switch {
+	case len(q) >= 2:
+		out, err = places.Search(r.Context(), s.Pool, q, qv.Get("category"), lon, lat, radius, limit)
+	case radius > 0:
+		out, err = places.Nearby(r.Context(), s.Pool, qv.Get("category"), lon, lat, radius, limit)
+	default:
+		writeErr(w, http.StatusBadRequest, "q (2+ chars) or lat+lon required")
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
@@ -387,16 +395,31 @@ func (s *Server) appraisalSales(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "lawd_cd(5), deal_ymd(YYYYMM) required")
 		return
 	}
+	// 키 미설정이면 상류 호출 없이 비활성 상태를 명시한다. (빈 키로 호출하면
+	// data.go.kr이 401을 주고 오해하기 쉬운 502가 됐다 — deploy/OPS.md 4절.)
+	if s.MolitKey == "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": map[string]string{
+				"code":    "SALES_DISABLED",
+				"message": "MOLIT_API_KEY 미설정 — 실거래 조회 비활성 (운영자가 키 투입 후 재시작 필요)",
+			},
+		})
+		return
+	}
 	u := fmt.Sprintf("https://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade?serviceKey=%s&LAWD_CD=%s&DEAL_YMD=%s&numOfRows=1000",
 		url.QueryEscape(s.MolitKey), lawd, ymd)
 	body, err := s.fetch(r.Context(), u)
 	if err != nil {
-		log.Printf("appraisal/sales upstream error: %v", redactKey(err, s.MolitKey))
+		log.Printf("req %s: appraisal/sales upstream error: %v",
+			RequestID(r.Context()), redactKey(err, s.MolitKey))
 		writeErr(w, http.StatusBadGateway, "upstream unavailable")
 		return
 	}
 	var mr molitResp
 	if err := xml.Unmarshal(body, &mr); err != nil || mr.Header.ResultCode != "000" {
+		// data.go.kr은 키 오류도 200 + 에러 XML로 주므로 원인 코드를 로그에 남긴다.
+		log.Printf("req %s: appraisal/sales molit resultCode=%q msg=%q xmlErr=%v",
+			RequestID(r.Context()), mr.Header.ResultCode, mr.Header.ResultMsg, err)
 		writeErr(w, http.StatusBadGateway, "upstream molit response invalid")
 		return
 	}

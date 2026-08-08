@@ -22,14 +22,40 @@ async function api(path, params, opts = {}) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(opts.body);
   }
-  const res = await fetch(url, init);
+  let res;
+  try {
+    res = await fetch(url, init);
+  } catch (e) {
+    console.error(`[b2d] ${init.method} ${url.pathname}${url.search} -> 네트워크 실패`, e);
+    throw e;
+  }
+  // 서버 미들웨어가 요청마다 X-Request-Id를 발급한다. 실패 시 이 ID를 콘솔과
+  // 화면에 남겨 서버 로그(`req <id>: ...`)와 대조할 수 있게 한다.
+  const reqID = res.headers.get("X-Request-Id") || "";
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     const msg =
       (body && body.error && (body.error.message || body.error)) || res.statusText;
-    throw Object.assign(new Error(msg), { status: res.status, body });
+    const err = Object.assign(new Error(msg), {
+      status: res.status,
+      body,
+      requestId: reqID,
+    });
+    console.error(
+      `[b2d] ${init.method} ${url.pathname}${url.search} -> ${res.status}` +
+        (reqID ? ` (req ${reqID})` : ""),
+      body,
+      err
+    );
+    throw err;
   }
   return body;
+}
+
+// 에러 표시용: 메시지 + (있으면) 요청 ID. 사용자가 이 ID로 문의하면 서버 로그와
+// 바로 대조된다.
+function errText(e) {
+  return e.requestId ? `${e.message} [req ${e.requestId}]` : e.message;
 }
 
 // 만원 단위 정수 문자열/숫자를 "6억 2,106만원" 형태로.

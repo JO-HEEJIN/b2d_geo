@@ -2,12 +2,11 @@
 // 토지특성·주변 상가·표준지를 조회해 지도와 패널에 표시한다. 좌표는 모두
 // [lon, lat](GeoJSON 순서); Leaflet에는 [lat, lon]으로 넘긴다.
 
-// Leaflet 기본 마커 아이콘 경로를 vendor로.
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "/vendor/images/marker-icon-2x.png",
-  iconUrl: "/vendor/images/marker-icon.png",
-  shadowUrl: "/vendor/images/marker-shadow.png",
-});
+// Leaflet 기본 마커 아이콘 경로를 vendor로. mergeOptions로 전체 URL을 주면
+// Leaflet이 CSS에서 자동 감지한 imagePath를 그 앞에 또 붙여 경로가 중복된다
+// (/vendor/images/vendor/images/... 404). imagePath만 지정하면 기본 파일명
+// (marker-icon.png 등)에 이 경로가 붙는다.
+L.Icon.Default.imagePath = "/vendor/images/";
 
 const map = L.map("map", { zoomControl: true }).setView([37.5665, 126.978], 11);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -91,7 +90,7 @@ async function searchAddress(q) {
     const [lon, lat] = r.point;
     await queryPoint(lat, lon);
   } catch (e) {
-    results.innerHTML = `<div class="card"><div class="body err-line">검색 실패: ${esc(e.message)}</div></div>`;
+    results.innerHTML = `<div class="card"><div class="body err-line">검색 실패: ${esc(errText(e))}</div></div>`;
   }
 }
 
@@ -222,7 +221,7 @@ async function loadSales(sgg) {
     const more = items.length > 8 ? `<div class="zone-more">외 ${items.length - 8}건</div>` : "";
     box.innerHTML = `<div class="muted" style="margin-bottom:6px">${items.length}건</div>${rows}${more}`;
   } catch (e) {
-    box.innerHTML = `<span class="err-line">${esc(e.message)}</span>`;
+    box.innerHTML = `<span class="err-line">${esc(errText(e))}</span>`;
   }
 }
 
@@ -235,7 +234,7 @@ async function loadPriceIndex(sgg, cls) {
     if (!series.length) { box.innerHTML = `<span class="muted">해당 용도지역 데이터가 없습니다.</span>`; return; }
     box.innerHTML = sparkline(series);
   } catch (e) {
-    box.innerHTML = `<span class="err-line">${esc(e.message)}</span>`;
+    box.innerHTML = `<span class="err-line">${esc(errText(e))}</span>`;
   }
 }
 
@@ -274,7 +273,8 @@ async function refreshOverlays() {
 
 async function loadPOI(lat, lon) {
   try {
-    const r = await api("/places/search", { q: "", lat, lon, radius: 500 });
+    // q 없이 lat/lon만 주면 서버가 반경 내 근접순 브라우즈 모드로 응답한다.
+    const r = await api("/places/search", { lat, lon, radius: 500, limit: 50 });
     (r.items || []).slice(0, 60).forEach((it) => {
       if (!it.point) return;
       const [plon, plat] = it.point;
