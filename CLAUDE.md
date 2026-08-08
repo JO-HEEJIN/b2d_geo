@@ -23,11 +23,11 @@
 - 운영 유지보수 (2026-08-08): 지도 데모 버그 3종 수정(마커 404·places 400·sales 502)
   + `/v1` 전체 X-Request-Id 에러 추적 도입 + 운영 `.env`에 MOLIT 키 투입(실거래 활성).
   MOIS 법정동코드 API 키 확보(.env `MOIS_API_KEY`, ETL 미착수).
+- Sentry 에러 추적 도입 (2026-08-08): panic/5xx 수집, X-Request-Id 태그 연동,
+  DSN 비면 자동 비활성. GHCR 로그인 복구로 배포는 push → CI → VPS pull 정상화.
 - 다음 작업 후보 (승인된 계획 아님 — 착수 전 사용자와 합의):
-  · 상용화 백로그: deploy/OPS.md 7절 (결제·rate limit 실운영값·모니터링·Cloudflare).
+  · 상용화 백로그: deploy/OPS.md 7절 (결제·rate limit 실운영값·Cloudflare).
   · 개별공시지가/토지특성 서울 외 지역 확대 (지역선택 적재 정책).
-  · VPS GHCR pull unauthorized 해소 — PAT(read:packages)로 docker login 1회
-    (현재는 git bundle 전송 + `docker compose build app` 우회로 배포).
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
