@@ -36,10 +36,11 @@ type Authenticator struct {
 }
 
 type cacheEntry struct {
-	id      int64
-	scopes  []string
-	rateRPS int
-	expires time.Time
+	id         int64
+	scopes     []string
+	rateRPS    int
+	monthlyCap int64 // 0 = 월 캡 없음
+	expires    time.Time
 }
 
 // NewAuthenticator는 pool을 사용하는 인증기를 만든다.
@@ -97,6 +98,20 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "forbidden", "API key missing required scope")
 			return
 		}
+		// /v1/usage는 캡 도달 후에도 열어 둔다: 셀프서브 고객이 잔여량·리셋 시점을
+		// 확인하는 메타 엔드포인트라, 여기까지 막으면 429의 안내가 무의미해진다.
+		if ent.monthlyCap > 0 && r.URL.Path != "/v1/usage" {
+			used, err := a.monthlyUsage(r.Context(), ent.id)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "usage check failed")
+				return
+			}
+			if used >= ent.monthlyCap {
+				writeError(w, http.StatusTooManyRequests, "monthly_cap_exceeded",
+					"monthly call quota for this key is used up; resets next month (UTC). upgrade plans: https://api.birth2death.com/pricing.html")
+				return
+			}
+		}
 		ctx := context.WithValue(r.Context(), ctxKeyAPIKeyID, ent.id)
 		ctx = context.WithValue(ctx, ctxKeyRateRPS, ent.rateRPS)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -115,9 +130,9 @@ func (a *Authenticator) lookup(ctx context.Context, hash string) (cacheEntry, bo
 
 	var ent cacheEntry
 	err := a.pool.QueryRow(ctx,
-		`SELECT id, scopes, rate_limit_rps FROM api_keys
+		`SELECT id, scopes, rate_limit_rps, monthly_cap FROM api_keys
 		 WHERE key_hash = $1 AND revoked_at IS NULL`, hash,
-	).Scan(&ent.id, &ent.scopes, &ent.rateRPS)
+	).Scan(&ent.id, &ent.scopes, &ent.rateRPS, &ent.monthlyCap)
 	if err == pgx.ErrNoRows {
 		return cacheEntry{}, false, nil
 	}
@@ -129,6 +144,21 @@ func (a *Authenticator) lookup(ctx context.Context, hash string) (cacheEntry, bo
 	a.cache[hash] = ent
 	a.mu.Unlock()
 	return ent, true, nil
+}
+
+// monthlyUsage는 이 달(UTC date_trunc 기준) 키의 총 호출 수를 usage_log에서 집계한다.
+// 메타 엔드포인트 /v1/usage 호출은 캡 소모로 치지 않는다(잔여량 폴링이 쿼터를 깎으면 안 됨).
+// 캡이 있는 키(monthly_cap > 0)에서만 요청마다 호출된다. (api_key_id, bucket) 인덱스를
+// 타는 한 달 범위 SUM이라 셀프서브 rate 수준에서는 부담이 없고, meter가 비동기 flush
+// (1초 주기)라 캡 초과 판정이 그만큼 늦을 수 있다(하드캡의 허용 오차).
+func (a *Authenticator) monthlyUsage(ctx context.Context, keyID int64) (int64, error) {
+	var used int64
+	err := a.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(count), 0) FROM usage_log
+		 WHERE api_key_id = $1 AND bucket >= date_trunc('month', now())
+		   AND endpoint <> '/v1/usage'`, keyID,
+	).Scan(&used)
+	return used, err
 }
 
 // extractKey는 X-API-Key를 우선하고, 없으면 Authorization: Bearer에서 키를 뽑는다.

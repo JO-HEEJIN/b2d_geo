@@ -111,7 +111,7 @@ func secureHeaders(next http.Handler) http.Handler {
 // 1회만 노출된다(DB에는 해시만 저장). B2D_SELF_SERVE_DEMO=true일 때만 라우팅된다.
 func (s *Server) issueDemoKey(w http.ResponseWriter, r *http.Request) {
 	const rateRPS = 2
-	id, plaintext, prefix, err := auth.CreateAPIKey(r.Context(), s.Pool, "self-serve-demo", []string{"geo"}, rateRPS)
+	id, plaintext, prefix, err := auth.CreateAPIKey(r.Context(), s.Pool, "self-serve-demo", []string{"geo"}, rateRPS, "demo", 0)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "key issue failed")
 		return
@@ -307,7 +307,32 @@ func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"total": total, "items": items})
+	// 티어·월 캡·이달 사용량. 셀프서브 구매 이유가 요금 예측 가능성이므로 잔여량을
+	// 함께 노출한다. monthly_cap 0은 캡 없음(remaining 미제공).
+	var tier string
+	var monthlyCap, monthUsed int64
+	err = s.Pool.QueryRow(r.Context(), `
+		SELECT k.tier, k.monthly_cap,
+		       (SELECT COALESCE(SUM(count), 0) FROM usage_log
+		        WHERE api_key_id = k.id AND bucket >= date_trunc('month', now())
+		          AND endpoint <> '/v1/usage')
+		FROM api_keys k WHERE k.id = $1`, keyID).Scan(&tier, &monthlyCap, &monthUsed)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	resp := map[string]any{
+		"total": total, "items": items,
+		"tier": tier, "monthly_cap": monthlyCap, "month_used": monthUsed,
+	}
+	if monthlyCap > 0 {
+		remaining := monthlyCap - monthUsed
+		if remaining < 0 {
+			remaining = 0
+		}
+		resp["month_remaining"] = remaining
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // reverseHandler는 좌표 → 최근접 건물 주소 (v0: 반경 200m KNN).

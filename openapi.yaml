@@ -78,6 +78,21 @@ paths:
                         count: { type: integer, format: int64 }
                         first_seen: { type: string, format: date-time }
                         last_seen: { type: string, format: date-time }
+                  tier:
+                    type: string
+                    description: 키의 요금 티어 (demo | standard)
+                  monthly_cap:
+                    type: integer
+                    format: int64
+                    description: 월 호출 하드캡. 0이면 캡 없음(rate limit만 적용)
+                  month_used:
+                    type: integer
+                    format: int64
+                    description: 이달(UTC) 총 호출 수
+                  month_remaining:
+                    type: integer
+                    format: int64
+                    description: 이달 잔여 호출 수 (monthly_cap > 0일 때만 존재)
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
@@ -546,10 +561,12 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { code: forbidden, message: "API key missing required scope" } }
     RateLimited:
-      description: rate limit 초과
+      description: >
+        rate limit 초과(code: rate_limited, Retry-After 헤더 포함) 또는
+        월 호출 하드캡 도달(code: monthly_cap_exceeded, 다음 달 UTC에 리셋).
       headers:
         Retry-After:
-          description: 재시도까지 대기 초
+          description: 재시도까지 대기 초 (rate_limited일 때만)
           schema: { type: integer }
       content:
         application/json:

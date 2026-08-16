@@ -850,3 +850,37 @@ V06 거리순+점수필드 부재 — 전부 통과. **TC-V가 실버그를 잡�
 - 문체 규칙은 grep으로 전수 점검: em-dash·인사 오프너·"국내 유일"·이모지 전부 부재 확인.
 - GitNexus detect_changes는 실행 불가(로컬에 .gitnexus 러너 없음, npm 깨짐). 이번 변경은
   HTML/JS 프론트와 md 문서만이라 Go 심볼 영향 없음.
+
+## 2026-08-16 — Track A Phase 2: 셀프서브 최소 과금 구조 (Fable 5 세션)
+
+### 무엇을 만들었나
+- **스키마**: `migrations/012_api_key_tiers.sql` — api_keys에 `tier`(demo|standard)와
+  `monthly_cap`(0=캡 없음) 두 컬럼. 기존 키는 기본값(demo, 0)으로 남아 동작이 변하지 않는다.
+- **월 하드캡**: auth 미들웨어가 캡 있는 키에 한해 usage_log의 이달(UTC) 합계를 조회해
+  캡 도달 시 429 `monthly_cap_exceeded`와 pricing.html 업그레이드 안내를 반환한다.
+  새 카운터 테이블을 만들지 않고 기존 meter의 usage_log를 그대로 재사용했다
+  ((api_key_id, bucket) 인덱스가 이미 있어 한 달 범위 SUM으로 충분).
+- **발급 경로 확장**: `auth.CreateAPIKey`에 tier/monthlyCap 파라미터 추가, CLI
+  `apikey create --tier --monthly-cap`, 셀프 데모키 발급은 (demo, 0) 고정.
+  티어는 화이트리스트 검증(없는 티어명은 발급 단계에서 거부).
+- **가시성**: /v1/usage 응답에 tier, monthly_cap, month_used, (캡 있으면)
+  month_remaining 추가. openapi.yaml 갱신.
+- **운영 문서**: deploy/OPS.md 7-1절 — 토스 정기결제 링크 수동 플로우(결제 확인 후
+  CLI 발급, 미납 시 revoke). 가격·rate·캡은 {PLACEHOLDER}로 두고 사용자 확정 대기.
+
+### 검증에서 잡은 실버그 — 캡이 잔여량 확인까지 잠갔다
+로컬 PostGIS(docker compose)에서 cap=3 키로 e2e를 돌리자, 4번째 호출의 429는 정상인데
+**/v1/usage(잔여량 확인)까지 429가 났다.** 셀프서브 구매 이유가 요금 예측 가능성인데
+캡에 도달한 고객이 자기 잔여량과 리셋 시점을 볼 수 없으면 429 안내가 무의미해진다.
+수정: /v1/usage는 캡 판정에서 제외하고, 캡 소모 집계에서도 제외(잔여량 폴링이 쿼터를
+깎으면 그것대로 왜곡이므로 양쪽을 일치시켰다). 재검증으로 캡 도달 후 usage 200 +
+month_remaining=0, 데이터 콜 429, cap=0 키 무영향(회귀 6콜)까지 확인.
+
+### 판단 기록
+- 요청마다 SUM 쿼리 vs 캐시: 단순성 원칙에 따라 캡 있는 키만 요청당 인덱스 SUM 1회.
+  셀프서브 rate 수준에서 부담이 없고, 캐시를 두면 TTL만큼 초과 허용이 생긴다.
+  meter의 1초 비동기 flush가 만드는 오차만 하드캡 허용 오차로 문서화했다.
+- 429 코드 분리: rate_limited(초 단위, Retry-After 있음)와 monthly_cap_exceeded
+  (월 단위, Retry-After 없음)를 코드로 구분해 클라이언트가 다르게 처리할 수 있게 했다.
+- 이 맥의 docker 데몬이 꺼져 있었을 뿐 Docker Desktop은 살아 있었다(메모리의
+  "docker 없음"은 CLI/데몬 상태 혼동). `open -a Docker` 20초면 로컬 e2e가 가능하다.

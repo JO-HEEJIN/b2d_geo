@@ -128,14 +128,54 @@ git config user.name "JO-HEEJIN" && git config user.email "midmost44@gmail.com"
 
 지금도 세 부류(일반인·개발자·감평사) 조회는 다 되지만, 상용화하려면:
 
-1. **결제·과금** — 현재 데모키(무료)뿐. Lemon Squeezy 등 결제 연동 + 티어별 발급 자동화.
-   (요금표는 `docs/08_Deployment_Pricing_b2d_geo.md`.)
-2. **rate limit 실운영값** — 티어별 rps/월한도 조정(현재 데모는 낮게).
+1. **결제·과금** — 최소 구성 도입(2026-08-16, Track A Phase 2): 티어 2종(demo/standard)
+   + 월 하드캡 + 토스 정기결제 링크 수동 플로우(7-1절). 풀 빌링 자동화는 비목표.
+2. **rate limit 실운영값** — 티어 파라미터는 키 발급 시 지정(7-1절 자리표시자 확정 필요).
 3. **MOLIT 키 투입** — 완료(2026-08-08). `.env`에 키 투입 후 `docker compose up -d app`으로
    재생성해야 env가 반영된다 (`restart`는 .env 변경을 다시 읽지 않음). 키가 비면 앱이
    상류 호출 없이 503 `SALES_DISABLED`를 반환한다.
 4. **모니터링/알림** — 업타임·에러·비용 알림(Lightsail 스냅샷 백업은 켜져 있음).
 5. **Cloudflare 프록시 전환**(선택) — DDoS/캐시가 필요하면 origin 인증서 방식으로.
+
+## 7-1. 셀프서브 유료 티어 운영 플로우 (수동, 2026-08-16 도입)
+
+원칙: 자동 과금 없음. 정액 + 월 하드캡. 초과분 종량 청구를 만들지 않는다
+(이 세그먼트의 구매 이유가 요금 예측 가능성이기 때문).
+
+### 티어 구조
+
+| 티어 | 대상 | rate | 월 캡 | 가격 |
+|---|---|---|---|---|
+| demo | 무료 소량(기존 정책) | 2 rps | 없음 | 무료 |
+| standard | 유료 정액 1티어 | {RATE_STANDARD} rps | {CAP_STANDARD} 호출/월 | {PRICE_SELF_SERVE}/월 |
+
+자리표시자 3개({RATE_STANDARD}, {CAP_STANDARD}, {PRICE_SELF_SERVE})는 사용자가 확정한다.
+pricing.html의 가격 자리표시자와 일치시킬 것.
+
+### 플로우
+
+1. 고객이 토스 정기결제 링크({TOSS_PAYMENT_LINK})로 결제한다.
+2. 결제 확인(토스 알림 또는 수동 대조) 후 VPS에서 키 발급:
+   ```bash
+   docker compose run --rm --entrypoint /b2d-etl app apikey create \
+     --name "<고객명>" --scopes geo,realestate \
+     --rate {RATE_STANDARD} --tier standard --monthly-cap {CAP_STANDARD}
+   ```
+3. 평문 키를 고객에게 1회 전달(DB에는 해시만 저장, 재표시 불가).
+4. 해지·미납 시 revoke: `UPDATE api_keys SET revoked_at = now() WHERE id = <id>;`
+   (B2D_AUTH_CACHE_TTL 기본 30초 내 반영.)
+
+### 동작 방식
+
+- 월 캡은 usage_log 이달(UTC 기준) 합계로 판정. 캡 도달 시 429 +
+  `monthly_cap_exceeded` 코드와 업그레이드 안내(pricing.html 링크)를 반환하고,
+  다음 달에 자동으로 풀린다. meter가 1초 주기 비동기 flush라 캡 판정에 그 정도
+  오차가 있다(하드캡 허용 오차).
+- `/v1/usage`가 tier, monthly_cap, month_used, month_remaining을 반환하므로
+  고객이 잔여량을 스스로 확인할 수 있다. 이 메타 엔드포인트는 캡 도달 후에도
+  호출 가능하고, 캡 소모로 집계되지도 않는다(잔여량 폴링이 쿼터를 깎지 않게).
+- 기존 키는 마이그레이션 시 tier='demo', monthly_cap=0(캡 없음)으로 남아 동작 불변.
+  운영 키의 티어 라벨을 바꾸려면: `UPDATE api_keys SET tier='standard', monthly_cap=<n> WHERE id=<id>;`
 
 ## 8. 보안 메모
 

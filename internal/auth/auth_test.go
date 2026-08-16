@@ -152,3 +152,16 @@ func TestTokenBucketRefill(t *testing.T) {
 		t.Fatal("after 1s refill should allow again")
 	}
 }
+
+func TestValidTier(t *testing.T) {
+	for _, tier := range []string{"demo", "standard"} {
+		if !ValidTier(tier) {
+			t.Errorf("ValidTier(%q) = false, want true", tier)
+		}
+	}
+	for _, tier := range []string{"", "free", "pro", "DEMO"} {
+		if ValidTier(tier) {
+			t.Errorf("ValidTier(%q) = true, want false", tier)
+		}
+	}
+}

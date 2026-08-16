@@ -373,15 +373,20 @@ func runEntrance(ctx context.Context, args []string) error {
 }
 
 // runApikey: b2d-etl apikey create --name <이름> [--scopes geo,realestate] [--rate <rps>]
+//
+//	[--tier demo|standard] [--monthly-cap <n>]
+//
 // 평문 키를 1회만 출력하고 DB에는 SHA-256 해시만 저장한다.
 func runApikey(ctx context.Context, args []string) error {
 	if len(args) < 1 || args[0] != "create" {
-		return fmt.Errorf("usage: b2d-etl apikey create --name <name> [--scopes geo,realestate] [--rate <rps>]")
+		return fmt.Errorf("usage: b2d-etl apikey create --name <name> [--scopes geo,realestate] [--rate <rps>] [--tier demo|standard] [--monthly-cap <n>]")
 	}
 	fs := flag.NewFlagSet("apikey create", flag.ContinueOnError)
 	name := fs.String("name", "", "owner name (required)")
 	scopesCSV := fs.String("scopes", "geo", "comma-separated scopes: geo,realestate")
 	rate := fs.Int("rate", 10, "rate limit requests per second (>0)")
+	tier := fs.String("tier", "demo", "pricing tier: demo|standard")
+	monthlyCap := fs.Int64("monthly-cap", 0, "monthly call hard cap (0 = no cap)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -400,12 +405,12 @@ func runApikey(ctx context.Context, args []string) error {
 		return err
 	}
 	defer pool.Close()
-	id, plaintext, prefix, err := auth.CreateAPIKey(ctx, pool, *name, scopes, *rate)
+	id, plaintext, prefix, err := auth.CreateAPIKey(ctx, pool, *name, scopes, *rate, *tier, *monthlyCap)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("api key created: id=%d prefix=%s scopes=%s rate_limit_rps=%d\n",
-		id, prefix, strings.Join(scopes, ","), *rate)
+	fmt.Printf("api key created: id=%d prefix=%s scopes=%s rate_limit_rps=%d tier=%s monthly_cap=%d\n",
+		id, prefix, strings.Join(scopes, ","), *rate, *tier, *monthlyCap)
 	fmt.Println("PLAINTEXT KEY (shown once, store securely):")
 	fmt.Println("  " + plaintext)
 	return nil

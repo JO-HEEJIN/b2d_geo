@@ -291,12 +291,17 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
 
 ## Track A Phase 2 — A-2 셀프서브 최소 구성 (Phase 1 리뷰 후 착수)
 
-- [ ] A2-1. API 키에 티어 필드 추가(무료 데모 + 유료 정액 1티어, 하드캡). 캡 수치는
-      {CAP_*} 자리표시자로 두고 사용자 확인. 새 서비스/테이블 남발 금지 — 기존 발급 코드 확장.
-- [ ] A2-2. rate limit에 티어별 하드캡 연결(기존 usage meter 재사용). 초과 시 429 +
-      업그레이드 안내 메시지. 자동 과금·초과 종량 청구 금지.
-- [ ] A2-3. 토스 정기결제 링크 + 수동 확인 후 키 발급 플로우 문서화(코드 최소).
-- [ ] A2-4. Verification phase: 티어 키 발급 -> 캡 도달 -> 429 body 확인. 요약 보고 -> 리뷰 대기
+- [x] A2-1. API 키 티어 필드(demo/standard) + monthly_cap 추가 — migrations/012,
+      기존 발급 코드 확장(CreateAPIKey, CLI --tier/--monthly-cap). 기존 키는 cap 0으로 불변.
+      캡·rate·가격 수치는 OPS.md 7-1절 자리표시자({CAP_STANDARD} 등) — 사용자 확정 대기.
+- [x] A2-2. 월 하드캡을 auth 미들웨어에 연결(usage_log 이달 합계, meter 재사용).
+      초과 시 429 monthly_cap_exceeded + pricing.html 업그레이드 안내. /v1/usage는 캡
+      판정·집계 제외(잔여량 확인은 캡 도달 후에도 가능). 자동 과금·초과 종량 없음.
+- [x] A2-3. 토스 정기결제 링크 수동 플로우 문서화 — deploy/OPS.md 7-1절
+      (결제 확인 -> apikey create -> 전달 -> 미납 시 revoke).
+- [x] A2-4. Verification phase 완료: 로컬 PostGIS(docker)로 cap=3 키 발급 -> 3콜 ->
+      4번째 429 body 확인, 캡 도달 후 /v1/usage 200 + month_remaining=0, cap=0 키
+      회귀 없음(6콜 통과). go build/vet/test 전체 통과.
 
 ## Track A Phase 3 — MCP 서버 (Phase 2 리뷰 후 착수)
 

@@ -18,6 +18,13 @@ const keyPrefixLen = 8
 // /v1/appraisal/* 계열에 필요하다.
 var validScopes = map[string]bool{"geo": true, "realestate": true}
 
+// validTiers는 발급 가능한 요금 티어 화이트리스트다. demo는 무료 소량(월 캡 없음,
+// rate limit만), standard는 유료 정액 1티어(월 호출 하드캡)다.
+var validTiers = map[string]bool{"demo": true, "standard": true}
+
+// ValidTier는 t가 발급 가능한 티어인지 확인한다.
+func ValidTier(t string) bool { return validTiers[t] }
+
 // HashKey는 평문 API 키의 SHA-256 해시를 hex로 돌려준다. DB에는 이 값만 저장한다.
 func HashKey(plaintext string) string {
 	sum := sha256.Sum256([]byte(plaintext))
@@ -63,15 +70,22 @@ func ParseScopes(csv string) ([]string, error) {
 
 // CreateAPIKey는 새 키를 발급해 해시만 저장하고, 발급된 평문과 prefix, id를 돌려준다.
 // 평문은 반환 즉시 1회 노출 후 폐기하는 것이 호출자의 책임이다.
-func CreateAPIKey(ctx context.Context, pool *pgxpool.Pool, name string, scopes []string, rateRPS int) (id int64, plaintext, prefix string, err error) {
+// monthlyCap 0은 월 캡 없음(rate limit만 적용)이다.
+func CreateAPIKey(ctx context.Context, pool *pgxpool.Pool, name string, scopes []string, rateRPS int, tier string, monthlyCap int64) (id int64, plaintext, prefix string, err error) {
+	if !ValidTier(tier) {
+		return 0, "", "", fmt.Errorf("unknown tier: %q (valid: demo, standard)", tier)
+	}
+	if monthlyCap < 0 {
+		return 0, "", "", fmt.Errorf("monthly cap must be >= 0")
+	}
 	plaintext, prefix, hash, err := GenerateKey()
 	if err != nil {
 		return 0, "", "", err
 	}
 	err = pool.QueryRow(ctx,
-		`INSERT INTO api_keys (key_hash, key_prefix, owner_name, scopes, rate_limit_rps)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		hash, prefix, name, scopes, rateRPS,
+		`INSERT INTO api_keys (key_hash, key_prefix, owner_name, scopes, rate_limit_rps, tier, monthly_cap)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		hash, prefix, name, scopes, rateRPS, tier, monthlyCap,
 	).Scan(&id)
 	if err != nil {
 		return 0, "", "", err
