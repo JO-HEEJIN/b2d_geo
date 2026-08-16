@@ -33,10 +33,17 @@
           <h3>관리형 API 구독</h3>
           <p>저희가 호스팅하는 API를 키 하나로 호출합니다. 자체 인프라 없이 바로 연동하려는 팀에 맞습니다.</p>
           <table class="price-table">
-            <thead><tr><th>플랜</th><th>가격</th></tr></thead>
+            <thead><tr><th>지오코딩 단독</th><th>가격</th></tr></thead>
             <tbody>
-              <tr><td>Starter<br><span class="muted">지오코딩 · 필지 · 공시지가</span></td><td class="amt">{PRICE_MANAGED_STARTER}/월</td></tr>
-              <tr><td>Pro<br><span class="muted">실거래 · 용도지역 · 상향 한도</span></td><td class="amt">{PRICE_MANAGED_PRO}/월</td></tr>
+              <tr><td>종량<br><span class="muted">지오코딩 · 역지오코딩 · 배치</span></td><td class="amt">{PRICE_GEO_PER_CALL}/건</td></tr>
+              <tr><td>볼륨 구간 할인<br><span class="muted">월 사용량 구간별 단가 인하</span></td><td class="amt">{PRICE_GEO_TIERS}</td></tr>
+            </tbody>
+          </table>
+          <table class="price-table" style="margin-top:18px">
+            <thead><tr><th>체인 조회 플랜</th><th>가격</th></tr></thead>
+            <tbody>
+              <tr><td>Starter<br><span class="muted">지오코딩 + 필지 · 공시지가</span></td><td class="amt">{PRICE_CHAIN_STARTER}/월</td></tr>
+              <tr><td>Pro<br><span class="muted">+ 실거래 · 용도지역 · 상향 한도</span></td><td class="amt">{PRICE_CHAIN_PRO}/월</td></tr>
             </tbody>
           </table>
         </div>

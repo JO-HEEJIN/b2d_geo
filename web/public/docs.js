@@ -220,15 +220,6 @@ B2D_CONFIG.then((cfg) => {
 document.getElementById("pricing").innerHTML = `
   <h3>요금제</h3>
   <p>원가는 공공데이터라 볼륨 경쟁이 아닌 <b>깊이</b>로 승부합니다. 카카오/네이버가 못 파는 필지·공시지가·감정평가 그래프.</p>
-  <table class="price-table">
-    <thead><tr><th>플랜</th><th>대상</th><th>포함</th><th>가격</th></tr></thead>
-    <tbody>
-      <tr><td>종량(지오코딩)</td><td>대량 정제</td><td>지오코딩·역지오코딩</td><td class="amt">건당 30/20/10원</td></tr>
-      <tr><td>부동산 Starter</td><td>프롭테크</td><td>필지 + 공시지가</td><td class="amt">월 30만원</td></tr>
-      <tr><td>부동산 Pro</td><td>분석·금융</td><td>실거래 + 용도지역 + 상향 한도</td><td class="amt">월 100만원</td></tr>
-      <tr><td>온프레미스</td><td>데이터 residency</td><td>무제한 내부 호출 + 갱신구독</td><td class="amt">연 3,000만원~</td></tr>
-    </tbody>
-  </table>
-  <p class="muted" style="margin-top:14px">배포 형태(관리형·온프레미스·벌크 배치)와 도입 문의는 <a href="/pricing.html">요금 페이지</a>에 있습니다.</p>
-  <p class="muted" style="margin-top:6px">데이터 출처: 국토교통부·행정안전부·한국부동산원·NSDI 등 공공데이터. 공공누리 약관 준수.</p>
+  <p>요금과 배포 형태(관리형 API·온프레미스·벌크 배치)는 <a href="/pricing.html">요금 페이지</a>에서 안내합니다.</p>
+  <p class="muted" style="margin-top:14px">데이터 출처: 국토교통부·행정안전부·한국부동산원·NSDI 등 공공데이터. 공공누리 약관 준수.</p>
 `;
