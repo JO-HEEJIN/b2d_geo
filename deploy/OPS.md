@@ -147,10 +147,14 @@ git config user.name "JO-HEEJIN" && git config user.email "midmost44@gmail.com"
 | 티어 | 대상 | rate | 월 캡 | 가격 |
 |---|---|---|---|---|
 | demo | 무료 소량(기존 정책) | 2 rps | 없음 | 무료 |
-| standard | 유료 정액 1티어 | {RATE_STANDARD} rps | {CAP_STANDARD} 호출/월 | {PRICE_SELF_SERVE}/월 |
+| standard | 유료 정액 1티어 | 5 rps | 100,000 호출/월 | 9,900원/월 |
 
-자리표시자 3개({RATE_STANDARD}, {CAP_STANDARD}, {PRICE_SELF_SERVE})는 사용자가 확정한다.
-pricing.html의 가격 자리표시자와 일치시킬 것.
+단가 확정 2026-08-16: 만 원 아래 심리선 + 예측 가능성(정액 하나). 캡 10만 건은 원가
+방어가 아니라 남용 방지·업셀 경계선(한계비용 ~0). rate 5는 단일 VPS 보호 목적.
+
+**B2B(A-1) 키 운영 원칙**: 새 티어를 만들지 않는다. B2B 계약 키는 standard에
+`--monthly-cap 0`(캡 없음)으로 발급하고 한도는 계약서로 관리한다. 티어 종류를
+늘리는 순간 단순성 규칙이 깨진다.
 
 ### 플로우
 
@@ -159,7 +163,7 @@ pricing.html의 가격 자리표시자와 일치시킬 것.
    ```bash
    docker compose run --rm --entrypoint /b2d-etl app apikey create \
      --name "<고객명>" --scopes geo,realestate \
-     --rate {RATE_STANDARD} --tier standard --monthly-cap {CAP_STANDARD}
+     --rate 5 --tier standard --monthly-cap 100000
    ```
 3. 평문 키를 고객에게 1회 전달(DB에는 해시만 저장, 재표시 불가).
 4. 해지·미납 시 revoke: `UPDATE api_keys SET revoked_at = now() WHERE id = <id>;`
@@ -167,10 +171,14 @@ pricing.html의 가격 자리표시자와 일치시킬 것.
 
 ### 동작 방식
 
-- 월 캡은 usage_log 이달(UTC 기준) 합계로 판정. 캡 도달 시 429 +
+- 월 캡은 usage_log 이달(UTC 기준) 합계로 판정 — 한국시간으로는 매월 1일 09:00
+  리셋이며, pricing.html에도 "UTC 월 기준"으로 공개돼 있다. 캡 도달 시 429 +
   `monthly_cap_exceeded` 코드와 업그레이드 안내(pricing.html 링크)를 반환하고,
   다음 달에 자동으로 풀린다. meter가 1초 주기 비동기 flush라 캡 판정에 그 정도
-  오차가 있다(하드캡 허용 오차).
+  오차가 있고, 캡 직전 동시 요청은 몇 건 초과 통과할 수 있다(하드캡이라 초과분이
+  과금으로 이어지지 않으므로 무해 — 인지만).
+- 기술 부채: 캡 판정이 요청마다 usage_log 월 합계 SUM이다. 지금 규모에선 문제없고,
+  키당 월 카운터 캐시는 성능 이슈가 실제로 확인된 뒤에 도입한다.
 - `/v1/usage`가 tier, monthly_cap, month_used, month_remaining을 반환하므로
   고객이 잔여량을 스스로 확인할 수 있다. 이 메타 엔드포인트는 캡 도달 후에도
   호출 가능하고, 캡 소모로 집계되지도 않는다(잔여량 폴링이 쿼터를 깎지 않게).

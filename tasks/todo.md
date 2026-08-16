@@ -303,12 +303,18 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
       4번째 429 body 확인, 캡 도달 후 /v1/usage 200 + month_remaining=0, cap=0 키
       회귀 없음(6콜 통과). go build/vet/test 전체 통과.
 
+- [ ] 사용자 작업: 토스 대시보드에서 9,900원 정기결제 링크 생성 →
+      OPS.md 7-1절 {TOSS_PAYMENT_LINK} 교체.
+
 ## Track A Phase 3 — MCP 서버 (Phase 2 리뷰 후 착수)
 
 - [ ] A3-1. 기존 HTTP API를 감싸는 얇은 MCP 래퍼(stdio 우선), 비즈니스 로직 재구현 금지.
       도구 7종: geocode, reverse_geocode, search_places, get_parcel, get_land_value
       (REGION_NOT_LOADED를 에이전트 친화 메시지로), get_transactions, get_zoning.
       도구 설명 한국어+영어 병기. 인증 env B2D_API_KEY.
+      429 monthly_cap_exceeded는 에이전트가 사용자에게 그대로 전달할 수 있는 문장으로
+      변환("이번 달 호출 한도에 도달했습니다. 업그레이드: .../pricing.html") —
+      MCP에서는 에러 메시지가 곧 영업 채널.
 - [ ] A3-2. 원격 HTTP(streamable) 형태(로컬 stdio 완성 후).
 - [ ] A3-3. README 튜토리얼(설치 복붙 -> 설정 JSON 복붙 -> 예시 질문 3개) + llms.txt를
       api.birth2death.com 루트에 추가(API 표면 + MCP 설치법 한 파일).
