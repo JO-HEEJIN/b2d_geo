@@ -308,18 +308,23 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
 
 ## Track A Phase 3 — MCP 서버 (Phase 2 리뷰 후 착수)
 
-- [ ] A3-1. 기존 HTTP API를 감싸는 얇은 MCP 래퍼(stdio 우선), 비즈니스 로직 재구현 금지.
-      도구 7종: geocode, reverse_geocode, search_places, get_parcel, get_land_value
-      (REGION_NOT_LOADED를 에이전트 친화 메시지로), get_transactions, get_zoning.
-      도구 설명 한국어+영어 병기. 인증 env B2D_API_KEY.
-      429 monthly_cap_exceeded는 에이전트가 사용자에게 그대로 전달할 수 있는 문장으로
-      변환("이번 달 호출 한도에 도달했습니다. 업그레이드: .../pricing.html") —
-      MCP에서는 에러 메시지가 곧 영업 채널.
-- [ ] A3-2. 원격 HTTP(streamable) 형태(로컬 stdio 완성 후).
-- [ ] A3-3. README 튜토리얼(설치 복붙 -> 설정 JSON 복붙 -> 예시 질문 3개) + llms.txt를
-      api.birth2death.com 루트에 추가(API 표면 + MCP 설치법 한 파일).
-- [ ] A3-4. Verification phase: MCP inspector(또는 Claude Desktop)로 연결, 7개 도구 실호출
-      1건씩 응답 body 확인. 요약 보고.
+- [x] A3-1. cmd/b2d-mcp — 표준 라이브러리만으로 stdio MCP 서버(JSON-RPC 2.0 줄 단위).
+      도구 7종, 설명 한국어+영어 병기, 인증 env B2D_API_KEY, 비즈니스 로직 없음
+      (파라미터 검증 + 기존 API GET 전달). 에러는 사람 전달용 문장으로 변환:
+      monthly_cap_exceeded("이번 달 호출 한도 도달... 업그레이드: pricing.html"),
+      REGION_NOT_LOADED(서울·경기 우선 적재 안내), unauthorized/forbidden/rate_limited.
+- [x] A3-2. streamable HTTP 모드: b2d-mcp -http :8330 -> POST /mcp (stateless,
+      알림은 202). initialize·tools/call 실호출 확인.
+- [x] A3-3. cmd/b2d-mcp/README.md 튜토리얼(설치 복붙 -> Claude Desktop/Cursor JSON
+      복붙 -> 예시 질문 3개) + web/public/llms.txt(API 표면 + 에러 코드 + MCP 설치법,
+      / 루트에서 자동 서빙 — 로컬 기동으로 200 확인).
+- [x] A3-4. Verification phase 완료: MCP inspector가 npm 불능이라 스크립트 JSON-RPC
+      클라이언트로 대체(프로토콜 레벨 동일). initialize/tools/list + 7개 도구 전부
+      라이브 API(api.birth2death.com) 실호출 body 확인 — geocode exact match,
+      공시지가 65,730,000원/㎡(정부 대조 기록값 일치), 실거래 5월 실데이터, 용도지역
+      17건. search_places 반경 500m 0건은 직접 API 대조로 래퍼 아닌 데이터 사실 확인
+      (반경 1000m 1건 정상). 월캡 문장은 로컬 스택(캡 소진 키)으로, REGION_NOT_LOADED
+      문장은 부산 PNU로 확인. 검증용 임시 키(id=38)는 revoke 완료.
 
 ## 비목표 (지시서 7절)
 

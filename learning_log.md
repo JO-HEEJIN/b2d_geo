@@ -884,3 +884,40 @@ month_remaining=0, 데이터 콜 429, cap=0 키 무영향(회귀 6콜)까지 확
   (월 단위, Retry-After 없음)를 코드로 구분해 클라이언트가 다르게 처리할 수 있게 했다.
 - 이 맥의 docker 데몬이 꺼져 있었을 뿐 Docker Desktop은 살아 있었다(메모리의
   "docker 없음"은 CLI/데몬 상태 혼동). `open -a Docker` 20초면 로컬 e2e가 가능하다.
+
+## 2026-08-16 — Track A Phase 3: MCP 서버 (Fable 5 세션)
+
+### 무엇을 만들었나
+- `cmd/b2d-mcp` — b2d_geo HTTP API를 MCP 도구 7종으로 노출하는 얇은 래퍼.
+  파라미터 검증과 GET 전달이 전부이고 판정은 전부 서버가 한다(재구현 금지 원칙).
+  stdio(줄 단위 JSON-RPC 2.0)와 streamable HTTP(-http, POST /mcp, stateless) 두 전송.
+- 의존성 결정: MCP SDK를 쓰지 않고 표준 라이브러리로 구현했다. 서버 subset이
+  initialize/tools/list/tools/call/ping 4개뿐이라 프로토콜 손구현이 SDK 의존(공급망
+  면적)보다 싸다고 판단(규칙 1.6). 프로토콜 버전은 클라이언트 요청이 지원 목록에
+  있으면 에코, 아니면 최신 제안.
+- 에러 = 영업 채널: MCP 도구 에러는 에이전트가 읽고 사용자에게 말해주는 구조라,
+  기계용 코드 대신 그대로 전달 가능한 문장을 내려보낸다. monthly_cap_exceeded는
+  한도 도달 + 리셋 시점 + pricing.html 업그레이드 안내, REGION_NOT_LOADED는
+  서울·경기 우선 적재 + 나머지 도구는 전국 동작 안내(한국어+영어 병기).
+- 온보딩 자산: cmd/b2d-mcp/README.md(복붙 튜토리얼: 설치 -> 설정 JSON -> 예시 질문
+  3개, 매뉴얼 안 읽는다는 전제), web/public/llms.txt(에이전트 크롤링용 한 파일:
+  전체 API 표면 + 에러 코드 + MCP 설치법; embed로 루트 /llms.txt 자동 서빙).
+
+### 검증 (inspector 대체 경위 포함)
+- MCP inspector는 npm 불능(이 맥 npm 깨짐)이라 스크립트 JSON-RPC 클라이언트로
+  대체 — inspector가 하는 일이 정확히 이 프로토콜 왕복이라 검증력은 동일하다.
+- 라이브 API 대상 7개 도구 전부 실호출 body 확인: geocode(세종대로 110 exact),
+  reverse, search_places, get_parcel(pnu 반환), get_land_value(개별공시지가
+  65,730,000원/㎡ — Phase 7 정부 대조 기록값과 일치), get_transactions(2026-05
+  실데이터), get_zoning(17건). 검증 키는 VPS에서 임시 발급 후 revoke.
+- search_places가 시청 반경 500m에서 0건: 래퍼 버그 의심 -> 동일 파라미터로 직접
+  API 호출도 0건 -> 상가DB상 사실(최근접 스타벅스가 종로 ~950m). 래퍼 충실성 확인.
+  교훈: 빈 응답은 버그 가정 말고 원 API와 파라미터 동일 대조가 먼저다.
+- 월캡 문장은 라이브에 캡 코드가 아직 미배포라 로컬 스택(도커 PostGIS + 캡 소진
+  키)으로 확인. streamable HTTP는 curl로 initialize/tools/call/알림(202) 확인.
+
+### 남은 것 (배포·유통)
+- go install 배포는 저장소가 private라 현재 외부인 불가 — 공개 미러, 바이너리
+  릴리스, 저장소 공개 중 결정 필요(사용자 판단).
+- VPS 배포 시퀀스: push -> CI -> pull + migrate(012). llms.txt·pricing.html도
+  같은 이미지에 embed되므로 함께 반영된다.
