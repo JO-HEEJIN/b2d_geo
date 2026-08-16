@@ -229,5 +229,6 @@ document.getElementById("pricing").innerHTML = `
       <tr><td>온프레미스</td><td>데이터 residency</td><td>무제한 내부 호출 + 갱신구독</td><td class="amt">연 3,000만원~</td></tr>
     </tbody>
   </table>
-  <p class="muted" style="margin-top:14px">데이터 출처: 국토교통부·행정안전부·한국부동산원·NSDI 등 공공데이터. 공공누리 약관 준수.</p>
+  <p class="muted" style="margin-top:14px">배포 형태(관리형·온프레미스·벌크 배치)와 도입 문의는 <a href="/pricing.html">요금 페이지</a>에 있습니다.</p>
+  <p class="muted" style="margin-top:6px">데이터 출처: 국토교통부·행정안전부·한국부동산원·NSDI 등 공공데이터. 공공누리 약관 준수.</p>
 `;
