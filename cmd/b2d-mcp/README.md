@@ -13,7 +13,7 @@ Go 1.23+가 있으면:
 go install github.com/JO-HEEJIN/b2d-geo-mcp@latest
 ```
 
-Go가 없으면 미러 저장소 Releases에서 OS별 바이너리를 받는다.
+설치된 바이너리 이름은 `b2d-geo-mcp`다. Go가 없으면 미러 저장소 Releases에서 OS별 바이너리를 받는다.
 
 API 키는 https://api.birth2death.com/docs.html 에서 데모 키를 발급받거나,
 전체 데이터(공시지가·실거래 포함)는 https://api.birth2death.com/pricing.html 참고.
@@ -28,7 +28,7 @@ API 키는 https://api.birth2death.com/docs.html 에서 데모 키를 발급받�
 {
   "mcpServers": {
     "b2d-geo": {
-      "command": "b2d-mcp",
+      "command": "b2d-geo-mcp",
       "env": { "B2D_API_KEY": "발급받은_키" }
     }
   }
@@ -43,7 +43,7 @@ API 키는 https://api.birth2death.com/docs.html 에서 데모 키를 발급받�
 {
   "mcpServers": {
     "b2d-geo": {
-      "command": "b2d-mcp",
+      "command": "b2d-geo-mcp",
       "env": { "B2D_API_KEY": "발급받은_키" }
     }
   }

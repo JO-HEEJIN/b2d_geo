@@ -51,7 +51,7 @@ Remote endpoint (no install): POST https://api.birth2death.com/mcp
   "headers": {"Authorization": "Bearer <your key>"}}}}
 Local (stdio): go install github.com/JO-HEEJIN/b2d-geo-mcp@latest
   (source and binary releases: https://github.com/JO-HEEJIN/b2d-geo-mcp)
-  Config: {"mcpServers": {"b2d-geo": {"command": "b2d-mcp", "env": {"B2D_API_KEY": "<your key>"}}}}
+  Config: {"mcpServers": {"b2d-geo": {"command": "b2d-geo-mcp", "env": {"B2D_API_KEY": "<your key>"}}}}
 Protocol: MCP revision 2025-06-18 (negotiates 2024-11-05, 2025-03-26).
 Tools: geocode, reverse_geocode, search_places, get_parcel, get_land_value,
 get_transactions, get_zoning. Tool errors are human-readable sentences meant to be
