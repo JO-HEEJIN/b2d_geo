@@ -4,11 +4,19 @@
 {$DOMAIN} {
 	encode gzip zstd
 
-	reverse_proxy app:8080
+	# 원격 MCP(streamable HTTP) — mcp 컨테이너로 프록시. handle은 상호 배타라
+	# /mcp만 여기로 가고 나머지는 아래 기본 블록이 받는다.
+	handle /mcp {
+		reverse_proxy mcp:8330
+	}
 
-	# 정적 자산 캐시(해시 없는 파일이라 보수적으로). API 응답은 앱이 제어.
-	@static path /vendor/* /styles.css /*.js
-	header @static Cache-Control "public, max-age=3600"
+	handle {
+		reverse_proxy app:8080
+
+		# 정적 자산 캐시(해시 없는 파일이라 보수적으로). API 응답은 앱이 제어.
+		@static path /vendor/* /styles.css /*.js
+		header @static Cache-Control "public, max-age=3600"
+	}
 
 	log {
 		output stdout

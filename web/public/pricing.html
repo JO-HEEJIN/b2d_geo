@@ -35,17 +35,18 @@
           <table class="price-table">
             <thead><tr><th>지오코딩 단독</th><th>가격</th></tr></thead>
             <tbody>
-              <tr><td>종량<br><span class="muted">지오코딩 · 역지오코딩 · 배치</span></td><td class="amt">{PRICE_GEO_PER_CALL}/건</td></tr>
-              <tr><td>볼륨 구간 할인<br><span class="muted">월 사용량 구간별 단가 인하</span></td><td class="amt">{PRICE_GEO_TIERS}</td></tr>
+              <tr><td>종량 · 배치<br><span class="muted">지오코딩 · 역지오코딩 · 대량 처리</span></td><td class="amt">볼륨 견적</td></tr>
             </tbody>
           </table>
           <table class="price-table" style="margin-top:18px">
             <thead><tr><th>체인 조회 플랜</th><th>가격</th></tr></thead>
             <tbody>
-              <tr><td>Standard<br><span class="muted">지오코딩 + 필지 · 공시지가 · 용도지역 · 실거래<br>월 100,000건 · 5 req/s</span></td><td class="amt">월 9,900원</td></tr>
-              <tr><td>Pro<br><span class="muted">상향 한도 · 기업 계약</span></td><td class="amt">{PRICE_CHAIN_PRO}/월</td></tr>
+              <tr><td>Standard<br><span class="muted">지오코딩 + 필지 · 공시지가 · 용도지역 · 실거래<br>월 100,000건 · 5 req/s</span></td><td class="amt">월 9,900원<br><span class="muted">부가세 포함</span></td></tr>
+              <tr><td>Pro<br><span class="muted">상향 한도 · 기업 계약</span></td><td class="amt">월 100만원</td></tr>
             </tbody>
           </table>
+          <!-- TODO: 토스 정기결제 링크 발급 시 아래 mailto CTA를 결제 링크로 교체 -->
+          <p style="margin-top:14px"><a class="btn" href="mailto:midmost44@gmail.com?subject=b2d_geo%20standard%20%EA%B5%AC%EB%8F%85%20%EC%8B%A0%EC%B2%AD">Standard 구독 신청</a></p>
           <p class="muted" style="margin-top:12px">정액 초과분 자동 과금은 없습니다. 한도 도달 시 429 응답과 함께 안내합니다. 사용량 집계는 UTC 월 기준입니다.</p>
         </div>
         <div class="feat">
@@ -54,8 +55,8 @@
           <table class="price-table">
             <thead><tr><th>항목</th><th>가격</th></tr></thead>
             <tbody>
-              <tr><td>연 라이선스</td><td class="amt">{PRICE_ONPREM_YEAR}/년</td></tr>
-              <tr><td>데이터 갱신 구독(선택)</td><td class="amt">{PRICE_ONPREM_UPDATE}/년</td></tr>
+              <tr><td>연 라이선스<br><span class="muted">무제한 내부 호출</span></td><td class="amt">연 3,000만원</td></tr>
+              <tr><td>데이터 갱신 구독(선택)<br><span class="muted">분기 스냅샷</span></td><td class="amt">연 800만원</td></tr>
             </tbody>
           </table>
         </div>
@@ -65,8 +66,8 @@
           <table class="price-table">
             <thead><tr><th>항목</th><th>가격</th></tr></thead>
             <tbody>
-              <tr><td>건별 종량</td><td class="amt">{PRICE_BULK_PER_CALL}/건</td></tr>
-              <tr><td>볼륨 정액</td><td class="amt">건별 견적</td></tr>
+              <tr><td>건별 종량</td><td class="amt">건별 견적</td></tr>
+              <tr><td>볼륨 정액</td><td class="amt">볼륨 견적</td></tr>
             </tbody>
           </table>
         </div>
@@ -105,7 +106,7 @@
     <section class="section" style="padding-top:0;text-align:center">
       <h2>도입 문의</h2>
       <p class="sub">라이브 API를 15분 안에 직접 보여드립니다. 처리량과 필요한 데이터 범위를 알려주시면 견적과 함께 답합니다.</p>
-      <a class="btn" href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
+      <a class="btn" href="mailto:midmost44@gmail.com">midmost44@gmail.com</a>
     </section>
   </div>
 

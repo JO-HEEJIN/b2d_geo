@@ -12,11 +12,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/b2d-server ./cmd/b2d-server && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/b2d-etl ./cmd/b2d-etl
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/b2d-etl ./cmd/b2d-etl && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/b2d-mcp ./cmd/b2d-mcp
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/b2d-server /b2d-server
 COPY --from=build /out/b2d-etl /b2d-etl
+COPY --from=build /out/b2d-mcp /b2d-mcp
 EXPOSE 8080
 USER nonroot:nonroot
 ENTRYPOINT ["/b2d-server"]

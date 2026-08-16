@@ -33,6 +33,8 @@ const (
 
 // supportedProtocols는 응답 가능한 MCP 프로토콜 버전이다. 클라이언트가 이 중
 // 하나를 요청하면 그대로 돌려주고, 모르는 버전이면 최신을 제안한다.
+// 구현 기준 리비전: 2025-06-18 스펙(stdio 줄 단위 + streamable HTTP).
+// 클라이언트 호환 문제가 실제로 발생하면 공식 SDK 전환 검토(OPS.md 부채 기록).
 var supportedProtocols = map[string]bool{
 	"2024-11-05": true, "2025-03-26": true, "2025-06-18": true,
 }
@@ -103,7 +105,7 @@ func (s *mcpServer) serveStdio() {
 		if line == "" {
 			continue
 		}
-		if resp := s.handleMessage([]byte(line)); resp != nil {
+		if resp := s.handleMessage([]byte(line), s.apiKey); resp != nil {
 			if err := out.Encode(resp); err != nil {
 				log.Println("stdout write failed:", err)
 				return
@@ -114,6 +116,9 @@ func (s *mcpServer) serveStdio() {
 
 // serveHTTP는 streamable HTTP 전송이다. POST /mcp에 JSON-RPC 메시지 하나를 받아
 // JSON으로 응답한다(알림이면 202). 세션 상태는 없다(stateless).
+// 인증은 호출자의 Authorization(Bearer) 또는 X-API-Key 헤더를 상류 API에 그대로
+// 전달한다 — 공개 원격 엔드포인트가 서버 env 키를 대신 쓰면 인증 우회가 되므로,
+// env B2D_API_KEY는 헤더가 없을 때의 폴백(사설 배치 전용)일 뿐이다.
 func (s *mcpServer) serveHTTP(addr string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /mcp", func(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +127,13 @@ func (s *mcpServer) serveHTTP(addr string) {
 			http.Error(w, "read failed", http.StatusBadRequest)
 			return
 		}
-		resp := s.handleMessage(body)
+		key := s.apiKey
+		if h := r.Header.Get("X-API-Key"); h != "" {
+			key = h
+		} else if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
+			key = strings.TrimSpace(a[len("Bearer "):])
+		}
+		resp := s.handleMessage(body, key)
 		if resp == nil { // 알림: 응답 본문 없음
 			w.WriteHeader(http.StatusAccepted)
 			return
@@ -137,7 +148,8 @@ func (s *mcpServer) serveHTTP(addr string) {
 }
 
 // handleMessage는 JSON-RPC 메시지 하나를 처리한다. 알림(id 없음)이면 nil을 돌려준다.
-func (s *mcpServer) handleMessage(raw []byte) *rpcResponse {
+// apiKey는 이 메시지의 상류 호출에 쓸 키다(stdio는 env, HTTP는 요청 헤더).
+func (s *mcpServer) handleMessage(raw []byte, apiKey string) *rpcResponse {
 	var req rpcRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return &rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}}
@@ -156,7 +168,7 @@ func (s *mcpServer) handleMessage(raw []byte) *rpcResponse {
 	case "tools/list":
 		result = map[string]any{"tools": toolDefs}
 	case "tools/call":
-		result, rerr = s.toolsCall(req.Params)
+		result, rerr = s.toolsCall(req.Params, apiKey)
 	default:
 		rerr = &rpcError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -291,7 +303,7 @@ func textResult(text string, isErr bool) *toolResult {
 	return &toolResult{Content: []map[string]any{{"type": "text", "text": text}}, IsError: isErr}
 }
 
-func (s *mcpServer) toolsCall(params json.RawMessage) (any, *rpcError) {
+func (s *mcpServer) toolsCall(params json.RawMessage, apiKey string) (any, *rpcError) {
 	var p struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -305,12 +317,12 @@ func (s *mcpServer) toolsCall(params json.RawMessage) (any, *rpcError) {
 		if a.str("query") == "" {
 			return textResult("query가 필요합니다. 예: 서울특별시 중구 세종대로 110", true), nil
 		}
-		return s.get("/geocode", url.Values{"q": {a.str("query")}}), nil
+		return s.get(apiKey,"/geocode", url.Values{"q": {a.str("query")}}), nil
 	case "reverse_geocode":
 		if !a.has("lon") || !a.has("lat") {
 			return textResult("lon, lat가 필요합니다.", true), nil
 		}
-		return s.get("/reverse", url.Values{"lon": {a.num("lon")}, "lat": {a.num("lat")}}), nil
+		return s.get(apiKey,"/reverse", url.Values{"lon": {a.num("lon")}, "lat": {a.num("lat")}}), nil
 	case "search_places":
 		q := url.Values{}
 		a.copyStr(q, "query", "q")
@@ -322,19 +334,19 @@ func (s *mcpServer) toolsCall(params json.RawMessage) (any, *rpcError) {
 		if len(q) == 0 {
 			return textResult("query 또는 좌표(lon, lat)가 필요합니다.", true), nil
 		}
-		return s.get("/places/search", q), nil
+		return s.get(apiKey,"/places/search", q), nil
 	case "get_parcel":
 		switch {
 		case a.str("pnu") != "":
-			return s.get("/parcel/"+url.PathEscape(a.str("pnu")), nil), nil
+			return s.get(apiKey,"/parcel/"+url.PathEscape(a.str("pnu")), nil), nil
 		case a.has("lon") && a.has("lat"):
-			return s.get("/parcel/by-point", url.Values{"lon": {a.num("lon")}, "lat": {a.num("lat")}}), nil
+			return s.get(apiKey,"/parcel/by-point", url.Values{"lon": {a.num("lon")}, "lat": {a.num("lat")}}), nil
 		case a.str("bcode") != "" && a.str("jibun") != "":
 			q := url.Values{"bcode": {a.str("bcode")}, "jibun": {a.str("jibun")}}
 			if a.boolVal("san") {
 				q.Set("san", "true")
 			}
-			return s.get("/parcel/by-jibun", q), nil
+			return s.get(apiKey,"/parcel/by-jibun", q), nil
 		default:
 			return textResult("pnu, 좌표(lon+lat), 법정동코드+지번(bcode+jibun) 중 하나가 필요합니다. 주소만 안다면 먼저 geocode로 좌표를 얻으세요.", true), nil
 		}
@@ -345,8 +357,8 @@ func (s *mcpServer) toolsCall(params json.RawMessage) (any, *rpcError) {
 		}
 		q := url.Values{"pnu": {pnu}}
 		a.copyNum(q, "base_year", "base_year")
-		price := s.get("/appraisal/official-price", q)
-		features := s.get("/appraisal/land-features", q)
+		price := s.get(apiKey,"/appraisal/official-price", q)
+		features := s.get(apiKey,"/appraisal/land-features", q)
 		// 두 사실을 한 응답으로 합친다(가공 없음). 한쪽 실패는 그 파트에 그대로 표시.
 		combined := "official_price:\n" + firstText(price) + "\n\nland_features:\n" + firstText(features)
 		return textResult(combined, price.IsError && features.IsError), nil
@@ -358,12 +370,12 @@ func (s *mcpServer) toolsCall(params json.RawMessage) (any, *rpcError) {
 		if lawd == "" || a.str("deal_ymd") == "" {
 			return textResult("deal_ymd(YYYYMM)와 lawd_cd(시군구 5자리) 또는 pnu가 필요합니다.", true), nil
 		}
-		return s.get("/appraisal/sales", url.Values{"lawd_cd": {lawd}, "deal_ymd": {a.str("deal_ymd")}}), nil
+		return s.get(apiKey,"/appraisal/sales", url.Values{"lawd_cd": {lawd}, "deal_ymd": {a.str("deal_ymd")}}), nil
 	case "get_zoning":
 		if a.str("pnu") == "" {
 			return textResult("pnu(19자리)가 필요합니다. get_parcel로 먼저 필지를 찾으세요.", true), nil
 		}
-		return s.get("/appraisal/land-use", url.Values{"pnu": {a.str("pnu")}}), nil
+		return s.get(apiKey,"/appraisal/land-use", url.Values{"pnu": {a.str("pnu")}}), nil
 	default:
 		return nil, &rpcError{Code: -32602, Message: "unknown tool: " + p.Name}
 	}
@@ -381,7 +393,7 @@ func firstText(r *toolResult) string {
 // get은 기존 HTTP API를 호출해 응답 body를 그대로 도구 결과로 만든다.
 // 에러 응답은 에이전트가 사용자에게 그대로 전달할 수 있는 문장으로 바꾼다
 // (MCP에서는 에러 메시지가 곧 안내 채널이다).
-func (s *mcpServer) get(path string, q url.Values) *toolResult {
+func (s *mcpServer) get(apiKey, path string, q url.Values) *toolResult {
 	u := s.apiBase + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
@@ -390,7 +402,7 @@ func (s *mcpServer) get(path string, q url.Values) *toolResult {
 	if err != nil {
 		return textResult("요청 생성 실패: "+err.Error(), true)
 	}
-	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return textResult("b2d_geo API에 연결하지 못했습니다: "+err.Error(), true)

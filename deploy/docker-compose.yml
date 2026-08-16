@@ -60,6 +60,19 @@ services:
     # distroless(shell·curl 없음)라 컨테이너 헬스체크는 생략한다. Caddy가 프록시하고
     # restart 정책이 크래시를 복구하며, /v1/health로 외부 모니터링을 붙일 수 있다.
 
+  # 원격 MCP(streamable HTTP). 같은 이미지의 /b2d-mcp를 -http로 띄우고 Caddy가
+  # https://{DOMAIN}/mcp 로 프록시한다. 인증은 호출자의 Authorization 헤더를
+  # 상류 API에 그대로 전달하므로 여기엔 키를 두지 않는다.
+  mcp:
+    image: ghcr.io/jo-heejin/b2d_geo:latest
+    restart: unless-stopped
+    depends_on:
+      - app
+    entrypoint: ["/b2d-mcp"]
+    command: ["-http", ":8330"]
+    environment:
+      B2D_API_BASE: http://app:8080/v1
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

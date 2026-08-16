@@ -45,10 +45,14 @@ JSON body: {"error": {"code": "...", "message": "..."}}
 
 ## MCP server (for AI agents: Claude Desktop, Cursor, ...)
 
-Install: go install github.com/JO-HEEJIN/b2d_geo/cmd/b2d-mcp@latest
-Config (Claude Desktop / Cursor mcpServers entry):
-  {"command": "b2d-mcp", "env": {"B2D_API_KEY": "<your key>"}}
-Remote mode: b2d-mcp -http :8330  ->  POST /mcp (streamable, stateless)
+Remote endpoint (no install): POST https://api.birth2death.com/mcp
+  streamable HTTP, stateless; send your API key as Authorization: Bearer <key>.
+  Config example: {"mcpServers": {"b2d-geo": {"url": "https://api.birth2death.com/mcp",
+  "headers": {"Authorization": "Bearer <your key>"}}}}
+Local (stdio): go install github.com/JO-HEEJIN/b2d-geo-mcp@latest
+  (source and binary releases: https://github.com/JO-HEEJIN/b2d-geo-mcp)
+  Config: {"mcpServers": {"b2d-geo": {"command": "b2d-mcp", "env": {"B2D_API_KEY": "<your key>"}}}}
+Protocol: MCP revision 2025-06-18 (negotiates 2024-11-05, 2025-03-26).
 Tools: geocode, reverse_geocode, search_places, get_parcel, get_land_value,
 get_transactions, get_zoning. Tool errors are human-readable sentences meant to be
 relayed to the user as-is.
