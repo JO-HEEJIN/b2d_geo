@@ -955,3 +955,31 @@ month_remaining=0, 데이터 콜 429, cap=0 키 무영향(회귀 6콜)까지 확
 - 공개 미러(go install용)는 로컬에 GitHub API 토큰이 없어 저장소 생성만 수동이다.
   ~/dev/b2d-geo-mcp에 모듈·README·goreleaser·Actions·v0.1.0 태그까지 준비 완료,
   빈 저장소 생성 즉시 push 가능. 모듈 루트 설치라 바이너리명은 b2d-geo-mcp.
+
+## 2026-08-18 — MCP 온보딩 간소화: 복붙 사고 없애기 (Fable 5 세션)
+
+### 문제 인식 (사용자 지적)
+JSON 여섯 줄 복붙은 바이브코더 퍼널의 실제 사고 지점이다. 채워야 할 칸이 하나라도
+있으면 거기서 이탈이 난다. 해법은 "설명을 더 잘 쓰기"가 아니라 "채울 칸을 0개로".
+
+### 구현
+- **키 내장 URL**: POST /mcp/{key} (Go 1.22 PathValue). 우선순위 헤더 > 경로 키 >
+  env 폴백. 전제 조건으로 Caddy에서 MCP 트래픽 접근 로그를 log_skip — 키가 URL에
+  실리는 방식은 로그 마스킹 없이는 열면 안 된다. log_skip은 2.8+ 문법이라 배포 전
+  VPS Caddy 버전(2.11.4) 확인 후 적용(구버전이면 기동 실패로 장애가 났을 것).
+- **발급 즉시 완성본**: docs.html에서 데모 키가 발급되는 순간 renderConnect()가
+  키가 이미 박힌 4형태를 만든다 — Claude Code 터미널 원라이너(claude mcp add),
+  Cursor 원클릭 딥링크(cursor://anysphere.cursor-deeplink/mcp/install, config는
+  base64 JSON), Claude Desktop용 설정 JSON, URL만 받는 도구용 키 내장 URL.
+  전부 복사 버튼, 키 노출 주의 문구 동반. CLI 사용자에겐 JSON이 아니라 명령
+  한 줄이 정답이라는 것이 이번 범위 합의의 핵심.
+- 미러 저장소 동기화(v0.1.2 릴리스, MIT는 v0.1.1부터), llms.txt·README 양쪽 갱신.
+
+### 검증
+- 로컬: /mcp/{key} 3경로(경로 키 성공, 나쁜 경로 키+좋은 헤더 = 헤더 승, 무효 키
+  = 안내 문장) body 확인. 연동 블록은 실제 docs.js를 프리뷰 하니스로 로드해 헤드리스
+  렌더 확인, Cursor 딥링크는 DOM에서 추출해 base64 디코드로 config 구조 검증
+  (href의 &는 HTML 엔티티로 이스케이프돼 있어 unescape 후 파싱해야 한다).
+- 라이브: 실제 퍼널 그대로 — 데모 키 발급 -> /mcp/{키} geocode exact match ->
+  헤더 모드 회귀 없음 -> Caddy 로그 5분 창에서 일반 요청 13건 기록되는 동안
+  /mcp 경로·키 문자열 0건(log_skip 실증).

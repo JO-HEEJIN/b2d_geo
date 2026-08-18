@@ -358,11 +358,14 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
 
 ## Track A 후속 — MCP 온보딩 간소화 (2026-08-18 합의: ①생성기+딥링크, ②키 내장 URL, CLI 원라이너)
 
-- [ ] G-1. 키 내장 URL: b2d-mcp HTTP 모드에 POST /mcp/{key} 추가(우선순위 헤더 >
+- [x] G-1. 키 내장 URL: b2d-mcp HTTP 모드에 POST /mcp/{key} 추가(우선순위 헤더 >
       경로 키 > env). Caddy /mcp 계열 로그 스킵(키가 접근 로그에 남지 않게).
-- [ ] G-2. docs.html 키 발급 직후 "연동" 블록 자동 생성: Claude Code CLI 원라이너,
+- [x] G-2. docs.html 키 발급 직후 "연동" 블록 자동 생성: Claude Code CLI 원라이너,
       Cursor 원클릭 딥링크, 완성 JSON(Claude Desktop 등), 키 내장 URL — 전부 발급된
       키가 박힌 채 복사 버튼. 키 노출 주의 문구.
-- [ ] G-3. llms.txt와 README(본 저장소 + 공개 미러)에 CLI 원라이너·키 내장 URL 반영.
-- [ ] G-4. Verification: 로컬 스택에서 /mcp/{key} 3경로(경로 키 성공/헤더 우선/무효
-      키 안내문) body 확인 -> 배포 -> 라이브 keyed URL·발급 UI 렌더 확인.
+- [x] G-3. llms.txt와 README(본 저장소 + 공개 미러)에 CLI 원라이너·키 내장 URL 반영.
+- [x] G-4. Verification 완료(2026-08-18): 로컬 3경로(경로 키 성공·헤더 우선·무효 키
+      안내문) body 확인, 연동 블록은 실제 docs.js로 프리뷰 렌더 + Cursor 딥링크
+      base64 디코드 검증. 라이브: 데모 키 발급 -> /mcp/{key} geocode 성공, 헤더
+      모드 회귀 없음, Caddy 로그에 /mcp·키 문자열 0건(log_skip 동작, 일반 요청
+      13건은 기록됨). 미러 v0.1.2 릴리스 성공.
