@@ -303,8 +303,30 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
       4번째 429 body 확인, 캡 도달 후 /v1/usage 200 + month_remaining=0, cap=0 키
       회귀 없음(6콜 통과). go build/vet/test 전체 통과.
 
-- [ ] 사용자 작업: 토스 대시보드에서 9,900원 정기결제 링크 생성 →
-      OPS.md 7-1절 {TOSS_PAYMENT_LINK} 교체.
+- [ ] 사용자 작업: 토스 대시보드에서 9,900원(부가세 포함) 정기결제 링크 생성 →
+      OPS.md 7-1절 {TOSS_PAYMENT_LINK} 교체 + pricing.html의 mailto CTA(TODO 주석)를
+      결제 링크로 교체.
+- [ ] 사용자 작업: github.com에서 빈 공개 저장소 JO-HEEJIN/b2d-geo-mcp 생성
+      (로컬 ~/dev/b2d-geo-mcp에 커밋·v0.1.0 태그 준비 완료 — 생성 즉시 push 가능.
+      로컬에 GitHub API 토큰이 없어 저장소 생성만 수동 필요).
+
+## Track A 마무리 (2026-08-16 최종 지시)
+
+- [x] F-1. 자리표시자 확정: standard 9,900원/월(부가세 포함)·100,000건·5rps —
+      pricing.html과 OPS.md 7-1 양쪽 반영, grep으로 일치 확인. pricing.html의
+      나머지 자리표시자 전부 제거(온프레미스 3,000만/갱신 800만·Pro 100만은
+      docs/08 기확정값, 종량 지오코딩은 "볼륨 견적" — 30/20/10원은 카카오 50원
+      오전제 기반이라 공개 보류, docs/08 재산정 필요).
+- [x] F-2. 셀프서브 CTA: mailto:midmost44@gmail.com (제목 프리필 "b2d_geo standard
+      구독 신청") + TODO 주석. UTC 월 기준 집계 문구 명시.
+- [x] F-3. 원격 MCP: HTTP 모드 인증을 호출자 Authorization/X-API-Key 헤더 패스스루로
+      변경(공개 라우트가 서버 키를 쓰면 인증 우회 — env는 폴백). Dockerfile에
+      b2d-mcp 빌드 추가, compose mcp 서비스, Caddy handle /mcp 라우트.
+- [x] F-4. 부채 기록: MCP 리비전(2025-06-18) 코드 상수 주석+README 명시, OPS.md에
+      SDK 전환 검토·월 카운터 캐시 2줄.
+- [ ] F-5. 배포: push 완료(378ab22) → CI 이미지 → VPS pull+up+migrate(012) →
+      라이브 검증(pricing 자리표시자 grep·llms.txt 200·캡 429 e2e·/mcp 3종 curl).
+- [ ] F-6. 공개 미러 push + v0.1.0 릴리스(goreleaser Actions) — 저장소 생성 대기.
 
 ## Track A Phase 3 — MCP 서버 (Phase 2 리뷰 후 착수)
 

@@ -921,3 +921,37 @@ month_remaining=0, 데이터 콜 429, cap=0 키 무영향(회귀 6콜)까지 확
   릴리스, 저장소 공개 중 결정 필요(사용자 판단).
 - VPS 배포 시퀀스: push -> CI -> pull + migrate(012). llms.txt·pricing.html도
   같은 이미지에 embed되므로 함께 반영된다.
+
+## 2026-08-16 — Track A 마무리: 확정 단가 반영·원격 MCP·라이브 배포 (Fable 5 세션)
+
+### 결정과 근거
+- **자리표시자 전부 제거**: standard 9,900원/월(부가세 포함)·100,000건·5rps 확정 반영.
+  온프레미스(연 3,000만/갱신 800만)와 Pro(월 100만)는 docs/08의 2026-07-27 기확정값.
+  단, 종량 지오코딩 30/20/10원은 공개하지 않고 "볼륨 견적"으로 돌렸다 — 그 사다리는
+  "카카오 50원/건" 오전제 위에서 설계됐고, 실제 카카오 지오코딩이 0.5원/건으로
+  판명된 지금 공개하면 즉시 반증당한다. docs/08 §2-1·§2-4 재산정이 필요하다(후속).
+- **원격 MCP의 인증 설계**: HTTP 모드가 서버 env 키로 상류를 호출하면 공개 /mcp가
+  인증 우회 통로가 된다. 호출자의 Authorization/X-API-Key 헤더를 상류 API에 그대로
+  전달하는 패스스루로 바꾸고, env 키는 사설 배치용 폴백으로 강등했다.
+- **배포 구성**: 같은 이미지에 /b2d-mcp를 추가하고 compose에 mcp 서비스(entrypoint
+  교체), Caddy는 handle /mcp -> mcp:8330, 나머지는 기본 handle. VPS의 deploy/
+  구성 파일은 git pull이 안 되므로(HTTPS 인증 없음) scp로 전송하는 게 정규 경로다.
+
+### 검증 (라이브, 실응답 body)
+- pricing.html: 자리표시자 정규식 매치 0건, 9,900원·부가세 포함·UTC 월 기준·데이터
+  residency 문장 확인. llms.txt 200.
+- 캡 e2e: cap=3 키(id=40)로 3콜 200 -> 4번째 429 monthly_cap_exceeded(업그레이드
+  안내 포함) -> /v1/usage 200 + month_remaining 0 -> revoke. 마이그레이션 012는
+  기본값 컬럼 추가라 무중단 적용(migrate: ok).
+- 원격 /mcp: initialize(2025-06-18 에코)·tools/list 7종·tools/call geocode exact
+  match를 공개 엔드포인트에서 curl로 확인. 헤더 패스스루는 로컬에서 env 키 없이
+  호출자 Bearer만으로 성공하는 것으로 별도 확인.
+- 독립 감사: 에러 경로(무인증 tools/call 안내 문장, 알림 202, malformed JSON,
+  GET /mcp 405)와 사이트 정합은 별도 에이전트 감사로 교차 확인.
+
+### 운영 함정 기록
+- zsh에서 `SSH="ssh -i ..."; $SSH host cmd` 패턴은 word-splitting이 없어 통째로
+  명령 경로가 된다 — 원격 반복 호출은 함수(vps() { ssh ... "$@"; })로 감쌀 것.
+- 공개 미러(go install용)는 로컬에 GitHub API 토큰이 없어 저장소 생성만 수동이다.
+  ~/dev/b2d-geo-mcp에 모듈·README·goreleaser·Actions·v0.1.0 태그까지 준비 완료,
+  빈 저장소 생성 즉시 push 가능. 모듈 루트 설치라 바이너리명은 b2d-geo-mcp.
