@@ -121,13 +121,19 @@ func (s *mcpServer) serveStdio() {
 // env B2D_API_KEY는 헤더가 없을 때의 폴백(사설 배치 전용)일 뿐이다.
 func (s *mcpServer) serveHTTP(addr string) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mcp", func(w http.ResponseWriter, r *http.Request) {
+	// /mcp/{key}는 키 내장 URL이다: 헤더를 못 붙이는 클라이언트가 URL 하나로
+	// 연결한다. 키 우선순위는 헤더 > 경로 > env(폴백). 키가 URL에 실리므로
+	// 프록시(Caddy)에서 /mcp 계열 접근 로그를 남기지 않는 것이 전제다.
+	handler := func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 4*1024*1024))
 		if err != nil {
 			http.Error(w, "read failed", http.StatusBadRequest)
 			return
 		}
 		key := s.apiKey
+		if p := r.PathValue("key"); p != "" {
+			key = p
+		}
 		if h := r.Header.Get("X-API-Key"); h != "" {
 			key = h
 		} else if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
@@ -140,7 +146,9 @@ func (s *mcpServer) serveHTTP(addr string) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
-	})
+	}
+	mux.HandleFunc("POST /mcp", handler)
+	mux.HandleFunc("POST /mcp/{key}", handler)
 	log.Println("b2d-mcp streamable http listening on", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)

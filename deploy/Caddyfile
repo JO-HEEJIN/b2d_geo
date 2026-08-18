@@ -5,8 +5,12 @@
 	encode gzip zstd
 
 	# 원격 MCP(streamable HTTP) — mcp 컨테이너로 프록시. handle은 상호 배타라
-	# /mcp만 여기로 가고 나머지는 아래 기본 블록이 받는다.
-	handle /mcp {
+	# /mcp 계열만 여기로 가고 나머지는 아래 기본 블록이 받는다.
+	# log_skip: /mcp/{key} 형태(키 내장 URL)의 키가 접근 로그에 남지 않게
+	# MCP 트래픽은 로그를 남기지 않는다.
+	@mcp path /mcp /mcp/*
+	handle @mcp {
+		log_skip
 		reverse_proxy mcp:8330
 	}
 

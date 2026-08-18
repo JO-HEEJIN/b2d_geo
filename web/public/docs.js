@@ -202,12 +202,19 @@ B2D_CONFIG.then((cfg) => {
       out.innerHTML =
         `<div class="issued"><code id="issuedKey">${esc(body.key)}</code>` +
         `<button class="btn ghost" id="copyKey">복사</button></div>` +
-        `<p class="muted" style="margin:8px 0 0">${esc(body.note || "")} 이 키는 다시 표시되지 않으니 안전하게 보관하세요.</p>`;
+        `<p class="muted" style="margin:8px 0 0">${esc(body.note || "")} 이 키는 다시 표시되지 않으니 안전하게 보관하세요.</p>` +
+        renderConnect(body.key);
       document.getElementById("copyKey").addEventListener("click", () => {
         navigator.clipboard.writeText(body.key).then(() => {
           document.getElementById("copyKey").textContent = "복사됨 ✓";
         });
       });
+      // 연동 블록의 복사 버튼(위임 리스너 — 블록마다 data-copy에 원문 보관)
+      out.querySelectorAll("button[data-copy]").forEach((b) =>
+        b.addEventListener("click", () => {
+          navigator.clipboard.writeText(b.dataset.copy).then(() => { b.textContent = "복사됨 ✓"; });
+        })
+      );
     } catch (e) {
       out.innerHTML = `<span class="err-line">${esc(e.message)}</span>`;
     } finally {
@@ -215,6 +222,35 @@ B2D_CONFIG.then((cfg) => {
     }
   });
 });
+
+// renderConnect는 발급된 키가 이미 박힌 AI 에이전트 연동 블록을 만든다.
+// 사용자가 채울 칸이 없어야 복붙 사고가 안 난다. 키가 URL/명령에 노출되므로
+// 화면 공유·공개 저장소 커밋 주의 문구를 함께 둔다.
+function renderConnect(key) {
+  const base = location.origin;
+  const cli = `claude mcp add --transport http b2d-geo ${base}/mcp --header "Authorization: Bearer ${key}"`;
+  const json = JSON.stringify(
+    { mcpServers: { "b2d-geo": { url: `${base}/mcp`, headers: { Authorization: `Bearer ${key}` } } } },
+    null, 2
+  );
+  const keyedURL = `${base}/mcp/${key}`;
+  const cursorLink = "cursor://anysphere.cursor-deeplink/mcp/install?name=b2d-geo&config=" +
+    encodeURIComponent(btoa(JSON.stringify({ url: `${base}/mcp`, headers: { Authorization: `Bearer ${key}` } })));
+  const block = (title, text, hint) =>
+    `<div style="margin-top:14px"><b style="font-size:13px">${title}</b>` +
+    (hint ? `<span class="muted" style="margin-left:8px">${hint}</span>` : "") +
+    `<div class="issued" style="margin-top:6px"><code style="white-space:pre-wrap;word-break:break-all">${esc(text)}</code>` +
+    `<button class="btn ghost" data-copy="${esc(text)}">복사</button></div></div>`;
+  return (
+    `<div style="margin-top:18px"><b>AI 에이전트에 바로 연결하기</b>` +
+    `<p class="muted" style="margin:4px 0 0">아래는 방금 발급된 키가 이미 들어간 완성본입니다. 하나 골라 그대로 쓰면 됩니다.</p>` +
+    `<p style="margin-top:10px"><a class="btn" href="${cursorLink}">Cursor에 원클릭 추가</a></p>` +
+    block("Claude Code (터미널 한 줄)", cli) +
+    block("Claude Desktop 등 (설정 JSON)", json) +
+    block("URL만 받는 도구", keyedURL, "키가 URL에 들어가니 화면 공유·공개 커밋 주의") +
+    `<p class="muted" style="margin-top:10px">예시 질문: "서울 세종대로 110 주변 1km 카페 찾고, 그 필지 정보도 알려줘"</p></div>`
+  );
+}
 
 // ---- 요금제(문서 하단) ----
 document.getElementById("pricing").innerHTML = `

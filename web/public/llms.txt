@@ -49,6 +49,10 @@ Remote endpoint (no install): POST https://api.birth2death.com/mcp
   streamable HTTP, stateless; send your API key as Authorization: Bearer <key>.
   Config example: {"mcpServers": {"b2d-geo": {"url": "https://api.birth2death.com/mcp",
   "headers": {"Authorization": "Bearer <your key>"}}}}
+Claude Code CLI (one line):
+  claude mcp add --transport http b2d-geo https://api.birth2death.com/mcp --header "Authorization: Bearer <your key>"
+URL-only clients (key embedded in the URL; keep it secret):
+  https://api.birth2death.com/mcp/<your key>
 Local (stdio): go install github.com/JO-HEEJIN/b2d-geo-mcp@latest
   (source and binary releases: https://github.com/JO-HEEJIN/b2d-geo-mcp)
   Config: {"mcpServers": {"b2d-geo": {"command": "b2d-geo-mcp", "env": {"B2D_API_KEY": "<your key>"}}}}

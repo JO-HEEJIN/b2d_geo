@@ -60,7 +60,13 @@ API 키는 https://api.birth2death.com/docs.html 에서 데모 키를 발급받�
 
 ## 원격 사용 (설치 없이)
 
-원격 MCP를 지원하는 클라이언트는 설치 없이 바로 연결할 수 있다:
+Claude Code(터미널)는 한 줄이면 된다:
+
+```bash
+claude mcp add --transport http b2d-geo https://api.birth2death.com/mcp --header "Authorization: Bearer 발급받은_키"
+```
+
+원격 MCP를 지원하는 다른 클라이언트는 설정에 붙여넣는다:
 
 ```json
 {
@@ -72,6 +78,16 @@ API 키는 https://api.birth2death.com/docs.html 에서 데모 키를 발급받�
   }
 }
 ```
+
+헤더를 못 붙이고 URL만 받는 도구는 키 내장 URL을 쓴다
+(키가 URL에 들어가니 화면 공유·공개 커밋 주의):
+
+```
+https://api.birth2death.com/mcp/발급받은_키
+```
+
+가장 쉬운 길: https://api.birth2death.com/docs.html 에서 데모 키를 발급하면
+위 세 형태가 키가 박힌 완성본으로 자동 생성된다(Cursor는 원클릭 버튼).
 
 ## 참고
 
