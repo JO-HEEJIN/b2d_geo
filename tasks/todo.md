@@ -306,9 +306,7 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
 - [ ] 사용자 작업: 토스 대시보드에서 9,900원(부가세 포함) 정기결제 링크 생성 →
       OPS.md 7-1절 {TOSS_PAYMENT_LINK} 교체 + pricing.html의 mailto CTA(TODO 주석)를
       결제 링크로 교체.
-- [ ] 사용자 작업: github.com에서 빈 공개 저장소 JO-HEEJIN/b2d-geo-mcp 생성
-      (로컬 ~/dev/b2d-geo-mcp에 커밋·v0.1.0 태그 준비 완료 — 생성 즉시 push 가능.
-      로컬에 GitHub API 토큰이 없어 저장소 생성만 수동 필요).
+- [x] 사용자 작업 완료(2026-08-18): 공개 저장소 JO-HEEJIN/b2d-geo-mcp 생성 -> push 완료.
 
 ## Track A 마무리 (2026-08-16 최종 지시)
 
@@ -326,7 +324,11 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
       SDK 전환 검토·월 카운터 캐시 2줄.
 - [ ] F-5. 배포: push 완료(378ab22) → CI 이미지 → VPS pull+up+migrate(012) →
       라이브 검증(pricing 자리표시자 grep·llms.txt 200·캡 429 e2e·/mcp 3종 curl).
-- [ ] F-6. 공개 미러 push + v0.1.0 릴리스(goreleaser Actions) — 저장소 생성 대기.
+- [x] F-6. 공개 미러 push + v0.1.0 릴리스 완료(2026-08-18). 최초 push에서 태그
+      이벤트가 워크플로 등록보다 먼저 처리돼 릴리스가 안 잡힘 -> 태그 재푸시로 트리거,
+      goreleaser 성공(darwin/linux/windows x amd64/arm64 6종 + checksums). 검증:
+      GOPROXY=direct go install .../b2d-geo-mcp@latest -> 설치 바이너리로 stdio MCP
+      geocode 실호출 body 확인. LICENSE는 미포함(사용자 결정 대기, MIT 추천).
 
 ## Track A Phase 3 — MCP 서버 (Phase 2 리뷰 후 착수)
 
