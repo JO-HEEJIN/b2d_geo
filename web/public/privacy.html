@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>개인정보처리방침 · b2d_geo</title>
+  <meta name="description" content="b2d_geo 개인정보처리방침. 수집 항목, 보유 기간, 처리 위탁, 정보주체 권리.">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .legal { max-width: 820px; margin: 0 auto; }
+    .legal h2 { font-size: 17px; margin: 30px 0 10px; }
+    .legal p, .legal li { color: var(--ink-2); font-size: 14px; line-height: 1.85; word-break: keep-all; }
+    .legal ul, .legal ol { padding-left: 22px; margin: 8px 0; }
+    .legal table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+    .legal th, .legal td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; color: var(--ink-2); word-break: keep-all; vertical-align: top; }
+    .legal th { color: var(--ink); }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="glyph">B</span> b2d_geo</a>
+    <nav>
+      <a href="/map.html">지도 데모</a>
+      <a href="/batch.html">배치</a>
+      <a href="/docs.html">API 문서</a>
+      <a href="/pricing.html">요금</a>
+      <button class="btn ghost" style="padding:7px 11px" onclick="toggleTheme()" aria-label="테마 전환">◐</button>
+    </nav>
+  </header>
+
+  <div class="wrap">
+    <section class="section legal">
+      <h1>개인정보처리방침</h1>
+      <p class="muted">시행일: 2026년 8월 27일</p>
+      <p>비투디(이하 "회사")는 공간정보 데이터 API 서비스 b2d_geo를 제공하면서 개인정보를 최소한으로 수집하고, 수집한 정보를 이 방침에 적은 대로만 처리합니다. 서비스는 회원 가입 절차가 없으며, 무료 데모 키는 개인정보 입력 없이 발급됩니다.</p>
+
+      <h2>1. 수집하는 개인정보의 항목과 방법</h2>
+      <table>
+        <thead><tr><th>구분</th><th>항목</th><th>수집 방법</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>문의·구독 신청</td>
+            <td>이메일 주소, 이용자가 메일 본문에 기재한 정보(이름 또는 회사명 등)</td>
+            <td>이용자가 회사에 보낸 이메일 수신</td>
+          </tr>
+          <tr>
+            <td>API 키 발급·관리</td>
+            <td>키의 해시값과 앞자리 일부(원문 미저장), 신청 시 기재한 소유자명, 발급·회수 시각</td>
+            <td>유료 키 발급 시 서버에 기록</td>
+          </tr>
+          <tr>
+            <td>서비스 이용 기록</td>
+            <td>API 키 식별자, 호출한 엔드포인트, 집계 시각, 호출 건수 (IP 주소 미포함)</td>
+            <td>API 호출 시 자동 집계</td>
+          </tr>
+          <tr>
+            <td>웹서버 접근 로그</td>
+            <td>IP 주소, 요청 경로, 요청 시각, 브라우저 정보(User-Agent)</td>
+            <td>웹서버가 자동 기록 (보안·장애 대응 목적)</td>
+          </tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>무료 데모 키 발급 시에는 어떤 개인정보도 입력받지 않습니다.</li>
+        <li>서비스는 쿠키를 사용하지 않습니다. 화면 테마 설정은 이용자 브라우저의 로컬 저장소에만 저장되며 서버로 전송되지 않습니다.</li>
+        <li>행태 분석, 광고, 추적 도구를 사용하지 않습니다.</li>
+      </ul>
+
+      <h2>2. 개인정보의 처리 목적</h2>
+      <ul>
+        <li>문의 응대, 구독 신청 처리, API 키 발급과 회수</li>
+        <li>요금 산정과 월 한도 관리(이용 기록 집계)</li>
+        <li>서비스 보안, 부정 이용 방지, 장애 원인 분석(접근 로그)</li>
+      </ul>
+
+      <h2>3. 결제 정보의 처리</h2>
+      <p>결제는 전자결제대행사(PG)를 통해 처리되며, <b>회사는 이용자의 카드번호 등 결제수단 정보를 수집하거나 저장하지 않습니다.</b> 결제수단 정보는 PG사가 자체 약관과 개인정보처리방침에 따라 처리합니다. 회사는 결제 승인 여부와 결제 식별 정보만 전달받습니다.</p>
+
+      <h2>4. 보유 기간과 파기</h2>
+      <table>
+        <thead><tr><th>항목</th><th>보유 기간</th><th>근거</th></tr></thead>
+        <tbody>
+          <tr><td>웹서버 접근 로그(IP 포함)</td><td>90일 후 자동 파기(로그 순환)</td><td>보안·장애 대응에 필요한 최소 기간</td></tr>
+          <tr><td>계약·결제 관련 기록</td><td>5년</td><td>전자상거래법 제6조</td></tr>
+          <tr><td>소비자 불만·분쟁 처리 기록</td><td>3년</td><td>전자상거래법 제6조</td></tr>
+          <tr><td>API 키 정보·이용 기록</td><td>구독 종료 후 위 법정 보존 기간까지</td><td>요금 정산·분쟁 대응</td></tr>
+          <tr><td>문의 이메일</td><td>처리 완료 후 3년</td><td>재문의 대응</td></tr>
+        </tbody>
+      </table>
+      <p>보유 기간이 지난 개인정보는 지체 없이 파기합니다. 전자 파일은 복구할 수 없는 방법으로 삭제합니다.</p>
+
+      <h2>5. 제3자 제공</h2>
+      <p>회사는 개인정보를 제3자에게 제공하지 않습니다. 다만 법령에 따라 수사기관 등이 적법한 절차로 요청하는 경우는 예외로 합니다.</p>
+
+      <h2>6. 처리 위탁</h2>
+      <table>
+        <thead><tr><th>수탁자</th><th>위탁 업무</th></tr></thead>
+        <tbody>
+          <tr><td>Amazon Web Services(AWS)</td><td>클라우드 서버 운영(서울 리전), 데이터 보관</td></tr>
+          <tr><td>Functional Software, Inc.(Sentry)</td><td>서비스 오류 추적. 오류 발생 시 요청 메타데이터가 전송되며, API 키 등 인증 정보는 전송 전에 제거됩니다.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>7. 정보주체의 권리</h2>
+      <p>이용자는 언제든지 자신의 개인정보에 대한 열람, 정정, 삭제, 처리 정지를 요청할 수 있습니다. 요청은 아래 보호책임자 이메일로 하면 되고, 회사는 지체 없이 처리 결과를 알립니다. 법정 보존 의무가 있는 기록은 보존 기간 중 삭제가 제한될 수 있으며, 이 경우 사유를 안내합니다.</p>
+
+      <h2>8. 안전성 확보 조치</h2>
+      <ul>
+        <li>API 키는 원문을 저장하지 않고 단방향 해시로만 보관합니다.</li>
+        <li>이용자와 서비스 간 모든 통신은 TLS로 암호화됩니다.</li>
+        <li>접근 로그는 90일 순환 정책으로 자동 파기됩니다.</li>
+        <li>수집 항목 자체를 최소화하여 유출 시 피해 범위를 줄입니다.</li>
+      </ul>
+
+      <h2>9. 개인정보 보호책임자</h2>
+      <ul>
+        <li>보호책임자: 조희진 (대표)</li>
+        <li>이메일(보호책임자 개인 메일): midmost44@gmail.com</li>
+        <li>일반 문의: info@birth2death.com</li>
+        <li>전화: 070-8983-4287</li>
+      </ul>
+      <p>개인정보 침해에 대한 신고나 상담이 필요한 경우 개인정보침해신고센터(privacy.kisa.or.kr, 국번 없이 118)에 문의할 수 있습니다.</p>
+
+      <h2>10. 방침의 변경</h2>
+      <p>이 방침을 변경하는 경우 시행일 7일 전부터 웹사이트에 공지합니다. 수집 항목이나 이용 목적이 늘어나는 변경은 시행일 30일 전에 공지합니다.</p>
+
+      <h2>부칙</h2>
+      <p>이 방침은 2026년 8월 27일부터 시행합니다.</p>
+    </section>
+  </div>
+
+  <footer class="landing-foot">
+    <div>
+      <a href="/terms.html">이용약관</a>·
+      <a href="/privacy.html">개인정보처리방침</a>·
+      <a href="/refund.html">환불정책</a>·
+      <a href="/pricing.html">요금</a>
+    </div>
+    <!-- TODO: {ECOMMERCE_REG_NO}는 통신판매업 신고 완료 후 실값으로 교체 — PG 심사 접수 전 필수 -->
+    <p style="margin-top:14px">비투디 | 대표: 조희진 | 사업자등록번호: 211-25-67093 | 통신판매업신고번호: 신고 진행 중</p>
+    <p style="margin-top:6px">경기도 하남시 미사강변남로 99, 1401호 | 전화: 070-8983-4287 | 이메일: info@birth2death.com</p>
+  </footer>
+
+  <script src="/shared.js"></script>
+</body>
+</html>

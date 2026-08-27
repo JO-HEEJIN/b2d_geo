@@ -87,8 +87,11 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      # 접근 로그(90일 순환 — Caddyfile log 블록과 쌍)
+      - caddy_logs:/var/log/caddy
 
 volumes:
   pgdata:
   caddy_data:
   caddy_config:
+  caddy_logs:

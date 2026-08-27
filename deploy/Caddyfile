@@ -22,8 +22,15 @@
 		header @static Cache-Control "public, max-age=3600"
 	}
 
+	# 접근 로그(IP 포함)는 파일로 남기고 90일(2160h) 후 자동 파기한다.
+	# 개인정보처리방침(privacy.html)의 "접근 로그 90일 보관" 문구와 이 설정이
+	# 실체 일치 쌍이다 — 한쪽을 바꾸면 반드시 다른 쪽도 바꿀 것.
 	log {
-		output stdout
+		output file /var/log/caddy/access.log {
+			roll_size 50MiB
+			roll_keep 20
+			roll_keep_for 2160h
+		}
 		format console
 	}
 }
