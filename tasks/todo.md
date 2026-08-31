@@ -390,7 +390,8 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
 
 - [x] P4-1. 공통 푸터 사업자정보: 모든 공개 페이지(index·docs·pricing·map·batch)에
       상호 비투디 / 대표 조희진 / 사업자등록번호 211-25-67093 / 소재지 경기도 하남시
-      미사강변남로 99, 1401호 / 이메일 midmost44@gmail.com / 전화 {PHONE_070} /
+      미사강변남로 99, 1401호 / 공개 문의 이메일 info@birth2death.com / 전화
+      070-8983-4287 / 통신판매업 {ECOMMERCE_REG_NO} 표기(작은 글씨, | 구분자). TODO 주석으로
       통신판매업 {ECOMMERCE_REG_NO} 표기(작은 글씨, | 구분자). TODO 주석으로 자리표시자
       교체 전제 명시. terms·privacy·refund 링크 포함. map·batch는 푸터 자체가 없어 신설.
       docs.html 푸터는 JS 렌더(docs-foot)라 주입 방식 확인 후 결정.
@@ -415,12 +416,14 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
       privacy·refund·pricing) 렌더 확인, 전 공개 페이지 푸터 존재 확인, grep 검사
       (a) 타사명·템플릿 잔재 0건 (b) 이모지 0건 (c) 211-25-67093 정확 일치.
       privacy 수집 항목 vs 실코드(발급 플로우·usage_log 스키마) 대조 결과 보고.
-- [x] P4-7. 로컬 커밋까지만(push 금지). 법적 문서 4종 전문은 사용자 리뷰·승인 후 push.
+- [x] P4-7. 사용자 리뷰 반영 후 로컬 커밋 및 push 완료. 법적 문서 4종과 공개 문의 이메일을
+      최종 확인했다.
 
 ### Phase 4 Review (2026-08-27)
 
 - 산출: terms/privacy/refund 3종 신설, 전 공개 페이지(index·docs·pricing·map·batch)
-  사업자정보 푸터(070-8983-4287 실값, {ECOMMERCE_REG_NO}만 자리표시자 유지),
+  사업자정보 푸터(공개 문의 이메일 info@birth2death.com, 전화 070-8983-4287 실값,
+  {ECOMMERCE_REG_NO}만 자리표시자 유지),
   pricing CTA "결제 시스템 준비 중" 문구 + 토스 잔재 주석 제거,
   docs/adr/0001-payment-provider-portone.md.
 - 접근 로그 보존 실체화: Caddy 접근 로그를 파일 출력(roll_keep_for 2160h = 90일)로

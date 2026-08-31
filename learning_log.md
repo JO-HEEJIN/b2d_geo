@@ -956,6 +956,23 @@ month_remaining=0, 데이터 콜 429, cap=0 키 무영향(회귀 6콜)까지 확
   ~/dev/b2d-geo-mcp에 모듈·README·goreleaser·Actions·v0.1.0 태그까지 준비 완료,
   빈 저장소 생성 즉시 push 가능. 모듈 루트 설치라 바이너리명은 b2d-geo-mcp.
 
+## 2026-08-31 — Phase 4 사용자 리뷰 반영 및 close-out
+
+### 변경
+
+- 공개 페이지 8개(index, docs, pricing, map, batch, terms, privacy, refund)의 푸터를
+  최종 정리했다.
+- 사용자에게 보이는 문의 이메일은 `info@birth2death.com`으로 통일했다.
+- 전화번호는 `070-8983-4287`, 통신판매업 신고번호는 `{ECOMMERCE_REG_NO}`로 유지했다.
+  신고번호는 실제 신고 완료 후 교체해야 한다.
+- 개인정보처리방침 내부의 보호책임자 개인 이메일 `midmost44@gmail.com`은 유지했다.
+
+### 검증
+
+- 공개 HTML 전수 검색으로 푸터의 사업자번호·전화번호·공개 문의 이메일·신고번호를 확인했다.
+- `신고 진행 중` 및 푸터의 잘못된 `info@` 누락 상태가 남아 있지 않음을 확인했다.
+- `git diff --check` 통과.
+
 ## 2026-08-18 — MCP 온보딩 간소화: 복붙 사고 없애기 (Fable 5 세션)
 
 ### 문제 인식 (사용자 지적)
