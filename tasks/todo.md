@@ -374,7 +374,7 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
 
 배경: 사업자등록 완료. 포트원 경유 PG 심사 접수에 필요한 사이트 요건(약관·개인정보·
 환불정책·하단 사업자정보)을 갖춘다. 토스 정기결제 링크 계획은 폐기됨.
-자리표시자 {ECOMMERCE_REG_NO}는 지어내지 않고 유지, 사용자가 실값 확보 후 교체.
+통신판매업 신고번호 `2026-경기하남-1593`을 신고증 확인 후 반영했다.
 
 2026-08-27 승인 반영 (사용자 + claude.ai 리뷰):
 - 전화 070-8983-4287 확정 — {PHONE_070} 전부 실값 교체.
@@ -391,9 +391,8 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
 - [x] P4-1. 공통 푸터 사업자정보: 모든 공개 페이지(index·docs·pricing·map·batch)에
       상호 비투디 / 대표 조희진 / 사업자등록번호 211-25-67093 / 소재지 경기도 하남시
       미사강변남로 99, 1401호 / 공개 문의 이메일 info@birth2death.com / 전화
-      070-8983-4287 / 통신판매업 {ECOMMERCE_REG_NO} 표기(작은 글씨, | 구분자). TODO 주석으로
-      통신판매업 {ECOMMERCE_REG_NO} 표기(작은 글씨, | 구분자). TODO 주석으로 자리표시자
-      교체 전제 명시. terms·privacy·refund 링크 포함. map·batch는 푸터 자체가 없어 신설.
+      070-8983-4287 / 통신판매업 신고번호 2026-경기하남-1593 표기(작은 글씨, | 구분자).
+      terms·privacy·refund 링크 포함. map·batch는 푸터 자체가 없어 신설.
       docs.html 푸터는 JS 렌더(docs-foot)라 주입 방식 확인 후 결정.
 - [x] P4-2. web/public/terms.html: 실제 서비스 기준 이용약관. 서비스 정의(공간정보
       데이터 API), API 키 관리 책임, 요금·결제(월 9,900원 부가세 포함·100,000건·선불),
@@ -423,7 +422,7 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
 
 - 산출: terms/privacy/refund 3종 신설, 전 공개 페이지(index·docs·pricing·map·batch)
   사업자정보 푸터(공개 문의 이메일 info@birth2death.com, 전화 070-8983-4287 실값,
-  {ECOMMERCE_REG_NO}만 자리표시자 유지),
+  통신판매업 신고번호 2026-경기하남-1593 반영),
   pricing CTA "결제 시스템 준비 중" 문구 + 토스 잔재 주석 제거,
   docs/adr/0001-payment-provider-portone.md.
 - 접근 로그 보존 실체화: Caddy 접근 로그를 파일 출력(roll_keep_for 2160h = 90일)로
@@ -439,9 +438,8 @@ REGION_NOT_LOADED, web 데모). 불일치 없음.
   키는 해시만 저장. Sentry는 SendDefaultPII=false + 스크러버(User 비움) 확인.
   쿠키 미사용, 테마는 localStorage(서버 미전송). TLS 문구는 "이용자와 서비스 간"
   으로 한정(내부 compose 네트워크는 평문이므로).
-- 남은 사용자 작업: (1) 문서 4종 전문 리뷰 -> push 승인(게이트), (2) 통신판매업
-  신고 후 {ECOMMERCE_REG_NO} 교체, (3) 포트원 PG 심사 접수.
-- close-out(승격+완료 태스크 클리어+CONTEXT.md 첫 생성)은 push 승인 후 수행.
+- 남은 사용자 작업: (1) 포트원 PG 심사 접수.
+- close-out은 완료되었고, 신고증 확인 후 통신판매업 신고번호를 반영했다.
 - 부수 발견: map.html 데모 패널에 기존 이모지 1건(placeholder) — 이번 범위 밖,
   제거 여부는 사용자 결정.
 - 추가 검증(2026-08-27): docs 옛 요금표 잔재 grep 전수 — web/public 전체(html·js·
