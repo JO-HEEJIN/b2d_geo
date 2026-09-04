@@ -33,7 +33,6 @@ func initSentry() bool {
 		Environment:      os.Getenv("SENTRY_ENVIRONMENT"),
 		Release:          vcsRevision(),
 		AttachStacktrace: true,
-		SendDefaultPII:   false,
 		BeforeSend:       api.SentryScrubber(os.Getenv("MOLIT_API_KEY")),
 	})
 	if err != nil {
