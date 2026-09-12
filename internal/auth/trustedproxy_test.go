@@ -65,15 +65,27 @@ func TestTrustedProxyRateLimitSeparatesClients(t *testing.T) {
 func TestKeyLimiterStillAppliesAcrossDifferentIPs(t *testing.T) {
 	rl := NewRateLimiter()
 	h := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
-	request := func(id int64) int {
+	request := func(id int64, peer string) int {
 		r := httptest.NewRequest("GET", "/v1/geocode", nil)
+		r.RemoteAddr = peer
 		ctx := context.WithValue(r.Context(), ctxKeyAPIKeyID, id)
 		ctx = context.WithValue(ctx, ctxKeyRateRPS, 1)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r.WithContext(ctx))
 		return w.Code
 	}
-	if request(1) != 204 || request(1) != 204 || request(1) != 429 || request(2) != 204 {
-		t.Fatal("API key bucket policy changed")
+	for i, tc := range []struct {
+		id   int64
+		peer string
+		want int
+	}{
+		{1, "198.51.100.1:1234", 204},
+		{1, "198.51.100.2:1234", 204},
+		{1, "198.51.100.3:1234", 429},
+		{2, "198.51.100.3:1234", 204},
+	} {
+		if got := request(tc.id, tc.peer); got != tc.want {
+			t.Fatalf("request %d: key=%d peer=%s got=%d want=%d", i+1, tc.id, tc.peer, got, tc.want)
+		}
 	}
 }
