@@ -53,6 +53,8 @@ services:
       MOLIT_API_KEY: ${MOLIT_API_KEY:-}
       B2D_DEMO_API_KEY: ${B2D_DEMO_API_KEY:-}
       B2D_SELF_SERVE_DEMO: ${B2D_SELF_SERVE_DEMO:-false}
+      B2D_TRUSTED_PROXY_CIDRS: ${B2D_TRUSTED_PROXY_CIDRS:-}
+      B2D_AUTH_CACHE_TTL: ${B2D_AUTH_CACHE_TTL:-30s}
       # Sentry 에러 추적 (비면 비활성 — 서버는 기존 로그만으로 동작)
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}

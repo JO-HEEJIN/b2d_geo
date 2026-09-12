@@ -3,6 +3,7 @@ package auth
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 // rate limit 파라미터.
 //   - per-key 처리율은 api_keys.rate_limit_rps(키별 값)를 그대로 쓰고, burst는 그 2배.
 //   - per-IP는 스키마에 파라미터가 없으므로 아래 상수를 쓴다.
+//
 // 지시서(6.5, 10절)가 수치를 지정하지 않아 team-lead 기본값(IP 20rps)을 상수화했다.
 const (
 	ipRatePerSec = 20.0 // IP별 기본 처리율(req/s)
@@ -86,13 +88,14 @@ func (l *limiter) allow(key string, rate, burst float64, now time.Time) (bool, t
 
 // RateLimiter는 키별·IP별 이중 토큰 버킷 미들웨어를 제공한다.
 type RateLimiter struct {
-	keyLim *limiter
-	ipLim  *limiter
+	keyLim         *limiter
+	ipLim          *limiter
+	trustedProxies []netip.Prefix
 }
 
 // NewRateLimiter는 빈 버킷 집합으로 초기화한다.
 func NewRateLimiter() *RateLimiter {
-	return &RateLimiter{keyLim: newLimiter(), ipLim: newLimiter()}
+	return &RateLimiter{keyLim: newLimiter(), ipLim: newLimiter(), trustedProxies: trustedProxyPrefixesFromEnv()}
 }
 
 // IPMiddleware는 IP별 제한만 적용한다. 인증 **앞단**(최외곽)에 배선해
@@ -104,7 +107,7 @@ func (rl *RateLimiter) IPMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if ok, wait := rl.ipLim.allow("ip:"+clientIP(r), ipRatePerSec, ipBurst, time.Now()); !ok {
+		if ok, wait := rl.ipLim.allow("ip:"+rl.requestIP(r), ipRatePerSec, ipBurst, time.Now()); !ok {
 			tooMany(w, wait)
 			return
 		}
