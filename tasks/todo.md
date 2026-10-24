@@ -541,5 +541,7 @@ vanilla JS + 기존 Leaflet만, 신규 서드파티 0개.
 - [ ] 사용자 작업: VPS .env에 B2D_VWORLD_KEY 추가 후 app 재기동, 실제 화면에서 항공사진 확인
 - [ ] 유료 판매 전: V-World 운영키 심사 신청·교체, 상업적 이용 조건 원문 확인
 - 법무 페이지 본문 서비스명(b2d_geo), 요금 페이지의 온프레미스 문구는 보류.
-- 상용화 백로그: 실거래 라우트 가중 rate limit 또는 일일 상류 예산, govulncheck 경고(Go 패치·x/text).
+- 상용화 백로그: 실거래 라우트 가중 rate limit 또는 일일 상류 예산.
+- [x] govulncheck 실패 해소 (2026-10-24, 96920c4): Docker 빌드 Go 1.26.5 -> 1.26.10, x/text v0.39.0 -> v0.41.0
+      (GO-2026-6629), CI setup-go check-latest. 로컬 govulncheck "No vulnerabilities found".
 - 운영 DB 확인 필요: 화성 일반구·광주전남 통합 코드가 parcels/standard_lots에 어떤 코드로 있는지.
