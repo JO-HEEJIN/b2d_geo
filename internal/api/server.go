@@ -52,6 +52,7 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	mux.HandleFunc("GET /v1/parcel/by-jibun", s.parcelByJibun)
 	mux.HandleFunc("GET /v1/parcel/{pnu}", s.parcelByPNU)
 	mux.HandleFunc("GET /v1/appraisal/sales", s.appraisalSales)
+	mux.HandleFunc("GET /v1/appraisal/sales/recent", s.appraisalSalesRecent)
 	mux.HandleFunc("GET /v1/appraisal/price-index", s.appraisalPriceIndex)
 	mux.HandleFunc("GET /v1/appraisal/standard-lots", s.appraisalStandardLots)
 	mux.HandleFunc("GET /v1/appraisal/official-price", s.appraisalOfficialPrice)
@@ -75,11 +76,15 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	// 프론트에 API 베이스와 데모 키를 런타임에 주입한다. 데모 키는 저장소가 아닌
 	// 환경변수(B2D_DEMO_API_KEY)에 두어 git에 시크릿이 남지 않게 한다. 이 키는
 	// 공개 데모용(좁은 scope + 낮은 rate limit)이라 노출을 전제로 운용한다.
+	// vworldKey는 V-World 영상 타일 키다. 타일 URL에 들어가므로 브라우저 노출이 전제이고,
+	// V-World 쪽 서비스 URL(도메인) 제한으로 보호한다. 비어 있으면 프론트가 항공사진
+	// 토글을 숨긴다.
 	root.HandleFunc("GET /config.json", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"apiBase":   "/v1",
 			"demoKey":   os.Getenv("B2D_DEMO_API_KEY"),
 			"selfServe": os.Getenv("B2D_SELF_SERVE_DEMO") == "true",
+			"vworldKey": os.Getenv("B2D_VWORLD_KEY"),
 		})
 	})
 	// 셀프 데모키 발급(선택 기능). 운영자가 B2D_SELF_SERVE_DEMO=true로 켤 때만

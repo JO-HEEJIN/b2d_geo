@@ -405,6 +405,63 @@ paths:
               example:
                 error: { code: SALES_DISABLED, message: "MOLIT_API_KEY 미설정 — 실거래 조회 비활성 (운영자가 키 투입 후 재시작 필요)" }
 
+  /v1/appraisal/sales/recent:
+    get:
+      summary: 토지매매 실거래 최근 N개월 묶음 + 법정동 대표점 (realestate scope)
+      operationId: appraisalSalesRecent
+      description: |
+        이번 달을 포함한 최근 N개월(기본 3, 최대 6)의 MOLIT RTMSDataSvcLandTrade 원자료를
+        한 번에 반환한다. 원자료는 지번이 마스킹되어 있으므로 지도 표시용으로 시군구 아래
+        법정동마다 대표점(그 법정동 표준지 좌표의 평균)을 함께 준다. 월별 응답은 서버에 6시간
+        캐시된다. 일부 월이 실패하면 failed_months에 담고 나머지를 반환한다(전부 실패 시 502).
+        한 달 거래가 1,000건을 넘어 첫 페이지만 담긴 달은 truncated_months에 표시한다.
+        표준지가 적재되지 않은(실존하지 않는) 시군구 코드는 404. 보정/평가/추천 파생값 없음.
+      parameters:
+        - name: lawd_cd
+          in: query
+          required: true
+          description: 법정동 시군구 코드 5자리
+          schema: { type: string, minLength: 5, maxLength: 5 }
+        - name: months
+          in: query
+          required: false
+          description: 최근 몇 개월 (1~6, 기본 3)
+          schema: { type: integer, minimum: 1, maximum: 6, default: 3 }
+      responses:
+        "200":
+          description: 최근 N개월 실거래 목록과 법정동 대표점
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: string }
+                  lawd_cd: { type: string }
+                  months: { type: array, items: { type: string, description: "YYYYMM, 최신순" } }
+                  failed_months: { type: array, items: { type: string } }
+                  truncated_months: { type: array, items: { type: string }, description: "1,000건 초과로 첫 페이지만 담긴 달" }
+                  total_count: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/LandTradeItem" }
+                  umd_points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string, description: "admin_areas 원문 (시도 시군구 읍면동)" }
+                        lng: { type: number }
+                        lat: { type: number }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: 알 수 없는 시군구 코드 (표준지 미적재)
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503":
+          description: 실거래 조회 비활성 (서버에 MOLIT 키 미설정)
+
   /v1/appraisal/price-index:
     get:
       summary: 지가변동률 사실조회 (realestate scope)

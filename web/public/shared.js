@@ -76,6 +76,44 @@ function formatWon(n) {
   return isFinite(v) ? v.toLocaleString("ko-KR") : "-";
 }
 
+// ---- 평 단위 (1평 = 400/121㎡ ≈ 3.3058㎡, 계량법 환산값) ----
+const SQM_PER_PYEONG = 400 / 121;
+
+// "1,234.5" 같은 문자열/숫자를 숫자로. 실패하면 NaN.
+function num(v) {
+  return Number(String(v == null ? "" : v).replace(/,/g, ""));
+}
+
+// ㎡ -> "4㎡ (1.2평)". 0 이하나 숫자가 아니면 "-".
+function fmtArea(m2) {
+  const v = num(m2);
+  if (!isFinite(v) || v <= 0) return "-";
+  const py = v / SQM_PER_PYEONG;
+  const pyStr = py >= 100 ? Math.round(py).toLocaleString("ko-KR") : py.toFixed(1);
+  return `${v.toLocaleString("ko-KR")}㎡ (${pyStr}평)`;
+}
+
+// 만원 단위 숫자를 "1,234만원" 형태로 (소수 반올림).
+function fmtManwonNum(manwon) {
+  const v = Number(manwon);
+  if (!isFinite(v) || v <= 0) return "-";
+  return `${Math.round(v).toLocaleString("ko-KR")}만원`;
+}
+
+// 원/㎡ -> 평당 만원 숫자.
+function perPyeongManwon(wonPerSqm) {
+  const v = num(wonPerSqm);
+  return isFinite(v) && v > 0 ? (v * SQM_PER_PYEONG) / 10000 : NaN;
+}
+
+// 중앙값. 빈 배열이면 NaN.
+function median(arr) {
+  const a = arr.filter((x) => isFinite(x)).sort((x, y) => x - y);
+  if (!a.length) return NaN;
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
 // ---- 라이트/다크 토글 (뷰어 선택을 root data-theme으로 stamp) ----
 (function initTheme() {
   const saved = localStorage.getItem("b2d-theme");

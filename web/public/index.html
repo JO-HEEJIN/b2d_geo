@@ -3,108 +3,82 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>b2d_geo — 대한민국 토지 인텔리전스 API</title>
-  <meta name="description" content="주소를 좌표로, 좌표를 필지로, 필지를 공시지가·용도지역·실거래·감정평가급 데이터로. 카카오·네이버가 못 파는 토지 데이터 그래프.">
+  <title>올맵 — 주소 하나로 보는 토지 정보 리포트</title>
+  <meta name="description" content="주소 하나로 공시지가·용도지역·최근 실거래·지가변동률을 한 화면에 모으고 리포트로 출력합니다. 국토교통부·한국부동산원 공공데이터 원자료 기반.">
   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
-  <meta property="og:image:alt" content="b2d_geo 로고">
-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
+  <meta property="og:image:alt" content="올맵 로고">
+  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
+    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
     <nav>
-      <a href="/map.html">지도 데모</a>
-      <a href="/batch.html">배치</a>
-      <a href="/docs.html">API 문서</a>
-      <a href="/pricing.html">요금</a>
+      <a href="/map.html">지도로 찾기</a>
       <button class="btn ghost" style="padding:7px 11px" onclick="toggleTheme()" aria-label="테마 전환">◐</button>
     </nav>
   </header>
 
   <section class="hero">
-    <span class="eyebrow">토지 인텔리전스 API</span>
-    <h1>주소 한 줄에서 <span class="grad">필지·공시지가·감정평가</span>까지</h1>
-    <p class="lead">대한민국 주소를 좌표로, 좌표를 필지로, 필지를 공시지가·용도지역·실거래·토지특성으로 잇습니다. 지오코딩을 넘어선 토지 데이터 그래프.</p>
-
+    <span class="eyebrow">토지 정보 리포트</span>
+    <h1>주소 하나로, <span class="grad">그 땅의 모든 것</span></h1>
+    <p class="lead">공시지가, 용도지역, 최근 실거래, 지가 흐름을 한 화면에 모으고 리포트로 출력합니다. 여러 사이트를 오가며 옮겨 적던 일을 한 번의 검색으로 끝내세요.</p>
     <form class="hero-search" id="heroForm">
-      <input id="heroQ" type="text" placeholder="도로명주소로 지금 해보기 (예: 경기도 하남시 대청로 10)" autocomplete="off">
-      <button class="btn" type="submit">조회 →</button>
+      <input id="heroQ" type="text" placeholder="도로명주소 입력 (예: 경기도 하남시 대청로 10)" autocomplete="off" aria-label="도로명주소">
+      <button class="btn" type="submit">리포트 보기</button>
     </form>
     <div class="hero-actions">
-      <a class="btn ghost" href="/map.html">지도 데모 열기</a>
-      <a class="btn ghost" href="/docs.html">API 문서 보기</a>
+      <a class="btn ghost" href="/map.html">지도에서 직접 찾기</a>
     </div>
-    <p class="hero-note">실데이터 · 무자격증 데모 · 브라우저에서 바로 실행</p>
-
-    <div class="graph">
+    <p class="hero-note">국토교통부·한국부동산원·국가공간정보 공공데이터 원자료 기반 · 감정평가가 아닌 참고 자료</p>
+    <div class="graph" aria-hidden="true">
       <span class="node">주소</span><span class="arrow">→</span>
-      <span class="node accent">좌표</span><span class="arrow">→</span>
-      <span class="node accent">필지 PNU</span><span class="arrow">→</span>
+      <span class="node accent">필지</span><span class="arrow">→</span>
       <span class="node gold">공시지가</span><span class="arrow">→</span>
       <span class="node">용도지역</span><span class="arrow">→</span>
-      <span class="node">실거래</span><span class="arrow">→</span>
-      <span class="node gold">감정평가</span>
+      <span class="node gold">최근 실거래</span><span class="arrow">→</span>
+      <span class="node">지가 흐름</span><span class="arrow">→</span>
+      <span class="node accent">리포트</span>
     </div>
   </section>
 
   <div class="wrap">
     <section class="section">
-      <h2>누가 쓰나요</h2>
-      <p class="sub">지도 위에서 클릭 한 번으로 토지를 이해하는 사람부터, 15개 엔드포인트를 코드에 붙이는 개발자까지.</p>
-      <div class="split">
-        <div class="audience">
-          <div class="ic">🗺️</div>
-          <h3>바로 써보고 싶다면</h3>
-          <p>설치도 가입도 없이, 주소를 검색하거나 지도를 클릭하면 그 땅의 필지 경계·공시지가·용도지역·토지특성·주변 상가가 한눈에 뜹니다.</p>
-          <ul>
-            <li>필지 경계 폴리곤을 지도에 표시</li>
-            <li>개별공시지가·용도지역·토지특성</li>
-            <li>주변 표준지·상가 오버레이</li>
-          </ul>
-          <a class="btn" href="/map.html">지도 데모 열기</a>
-        </div>
-        <div class="audience">
-          <div class="ic">⌨️</div>
-          <h3>서비스에 붙이고 싶다면</h3>
-          <p>REST 15개 엔드포인트. 브라우저에서 바로 실행해보고, 응답 예시를 확인하고, Bearer 키 하나로 연동하세요. 모든 응답은 공공데이터 사실만 반환합니다.</p>
-          <ul>
-            <li>지오코딩·역지오코딩·일괄 처리</li>
-            <li>필지·공시지가·용도지역·실거래</li>
-            <li>문서에서 바로 try-it-out</li>
-          </ul>
-          <a class="btn" href="/docs.html">API 문서 보기</a>
-        </div>
+      <h2>이렇게 씁니다</h2>
+      <p class="sub">검색 한 번이면 그 땅을 설명하는 데 필요한 숫자가 한 장에 모입니다.</p>
+      <div class="features">
+        <div class="feat"><div class="step">01</div><h3>주소만 입력</h3><p>도로명주소를 넣거나 지도를 누르면 필지 경계와 공시지가, 용도지역, 토지특성이 바로 뜹니다. 면적과 단가는 ㎡와 평으로 함께 보여줍니다.</p></div>
+        <div class="feat"><div class="step">02</div><h3>동네 거래와 흐름</h3><p>같은 동의 최근 3개월 토지 실거래를 평당가와 함께 모아 보고, 지가변동률은 기간을 바꿔 가며 그래프로 확인합니다.</p></div>
+        <div class="feat"><div class="step">03</div><h3>리포트로 출력</h3><p>조회한 내용을 A4 리포트로 출력하거나 PDF로 저장해 보고서 초안, 고객 안내 자료로 바로 씁니다.</p></div>
       </div>
     </section>
 
     <section class="section" style="padding-top:0">
-      <h2>왜 b2d_geo인가</h2>
-      <p class="sub">범용 지오코더는 좌표에서 멈춥니다. 우리는 그 좌표가 어떤 땅인지까지 답합니다.</p>
+      <h2>믿을 수 있는 숫자만</h2>
+      <p class="sub">보여주는 모든 값에는 출처가 있습니다. 임의로 보정하거나 추정한 값을 섞지 않습니다.</p>
       <div class="features">
-        <div class="feat"><div class="ic">🧭</div><h3>좌표는 PDF가 아니라 원자료에서</h3><p>지오메트리는 지적·주소 원본에서, 값은 공공데이터에서. 보정·추정·추천 없이 사실만.</p></div>
-        <div class="feat"><div class="ic">🏗️</div><h3>아무도 안 파는 깊이</h3><p>주소→필지→공시지가→용도지역→실거래→감정평가. 카카오·네이버·구글에 없는 토지 그래프.</p></div>
-        <div class="feat"><div class="ic">🔒</div><h3>온프레미스까지</h3><p>데이터 residency가 필요한 조직을 위한 무제한 내부 호출 라이선스. 콜당 과금 없음.</p></div>
+        <div class="feat"><h3>공공데이터 원자료</h3><p>국토교통부 실거래, 한국부동산원 지가변동률, 국가공간정보 지적·용도지역 원자료를 그대로 씁니다.</p></div>
+        <div class="feat"><h3>흩어진 정보를 한 곳에</h3><p>공시지가 조회, 토지이용계획 열람, 실거래가 공개 시스템을 따로 찾아다닐 필요가 없습니다.</p></div>
+        <div class="feat"><h3>판단은 전문가에게</h3><p>가격 판단은 하지 않습니다. 감정평가와 투자 판단에 필요한 사실 자료를 빠르게 모으는 데 집중합니다.</p></div>
       </div>
     </section>
   </div>
 
   <footer class="landing-foot">
     <div>
-      <a href="/map.html">지도 데모</a>·
-      <a href="/docs.html">API 문서</a>·
-      <a href="/pricing.html">요금제</a>·
+      <a href="/map.html">지도</a>·
       <a href="/terms.html">이용약관</a>·
       <a href="/privacy.html">개인정보처리방침</a>·
       <a href="/refund.html">환불정책</a>
     </div>
+    <p class="dev-links">개발자: <a href="/docs.html">API 문서</a>·<a href="/batch.html">대량 조회</a>·<a href="/pricing.html">요금</a></p>
     <p style="margin-top:12px">데이터: 국토교통부·행정안전부·한국부동산원·NSDI 공공데이터 · 공공누리 약관 준수</p>
     <p style="margin-top:14px">비투디 | 대표: 조희진 | 사업자등록번호: 211-25-67093 | 통신판매업신고번호: 2026-경기하남-1593</p>
     <p style="margin-top:6px">경기도 하남시 미사강변남로 99, 1401호 | 전화: 070-8983-4287 | 이메일: info@birth2death.com</p>
   </footer>
 
-  <script src="/shared.js"></script>
+  <script src="/shared.js?v=ui-20261024"></script>
   <script>
     document.getElementById("heroForm").addEventListener("submit", (e) => {
       e.preventDefault();

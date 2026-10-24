@@ -1,4 +1,4 @@
-# b2d_geo — Korean land intelligence API (지오코딩·필지·공시지가·용도지역·실거래)
+# 올맵 (b2d_geo) — Korean land intelligence API (지오코딩·필지·공시지가·용도지역·실거래)
 
 Base URL: https://api.birth2death.com/v1
 Auth: Authorization: Bearer <API_KEY> (or X-API-Key header). /v1/health needs no auth.
@@ -22,6 +22,7 @@ Coordinates are [lon, lat], WGS84.
 - GET /v1/appraisal/land-use?pnu=        zoning: use zones/districts with relation (include/conflict/adjacent). scope: realestate
 - GET /v1/appraisal/standard-lots?lon=&lat=&radius=   standard lots by distance. scope: realestate
 - GET /v1/appraisal/sales?lawd_cd=&deal_ymd=          real land transactions (MOLIT), district + YYYYMM. scope: realestate
+- GET /v1/appraisal/sales/recent?lawd_cd=&months=     last N months (1-6, default 3) of land transactions + legal-dong centroids. scope: realestate
 - GET /v1/appraisal/price-index?ym=      land price index. scope: realestate
 - GET /v1/usage                          your key's usage, tier, monthly cap and remaining calls.
 - GET /v1/health                         health check, no auth.

@@ -371,3 +371,203 @@ table.params td.req { color: var(--warn); font-size: 11px; }
 .match-badge.ambiguous { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
 .match-badge.error { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--ink-3); }
 .batch-empty { color: var(--ink-3); padding: 40px; text-align: center; }
+
+/* ============ REPORT VIEW (2026-10 컨설팅 반영) ============ */
+/* 검색 전: [검색 패널 | 큰 지도]. 결과가 생기면 화이트보드 스케치대로
+   [사진+지도 1/3 | 거래내역 | 지가변동률 | 판단 요약+출력] 4열. */
+/* .toggle-row label, .photo-empty처럼 display를 지정한 요소도 hidden 속성이면 숨긴다. */
+[hidden] { display: none !important; }
+.map-app { grid-template-areas: "panel geo"; }
+.map-panel { grid-area: panel; }
+.col-geo { grid-area: geo; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.col-geo #map { flex: 1; height: auto; min-height: 0; }
+.results { grid-area: res; display: none; }
+.photo-box { display: none; }
+.print-head { display: none; }
+.placeholder-msg .big { font-size: 19px; font-weight: 800; color: var(--ink); opacity: 1; letter-spacing: -.01em; }
+
+.map-app.has-report {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "panel panel" "geo res";
+}
+.has-report .map-panel { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
+.has-report .search-wrap { flex: 1; border-bottom: 0; padding: 10px 16px; }
+.has-report .search-row { max-width: 620px; }
+.has-report .hint, .has-report .examples, .has-report #intro { display: none; }
+.has-report .toggle-row { border-bottom: 0; flex-wrap: wrap; }
+.has-report .photo-box { display: flex; flex-direction: column; height: 42%; min-height: 200px; border-bottom: 1px solid var(--border); }
+.photo-map { flex: 1; min-height: 0; background: var(--surface-3); }
+.photo-empty { flex: 1; display: grid; place-items: center; text-align: center; padding: 16px; font-size: 13px; color: var(--ink-3); background: var(--surface-2); }
+.has-report .results {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-left: 1px solid var(--border); min-height: 0;
+}
+.col { min-height: 0; min-width: 0; overflow-y: auto; padding: 0 14px 18px; border-right: 1px solid var(--border); background: var(--surface); }
+.col:last-child { border-right: 0; }
+.col-title {
+  position: sticky; top: 0; z-index: 2; background: var(--surface);
+  font-size: 15px; font-weight: 800; letter-spacing: -.01em; color: var(--ink);
+  padding: 14px 0 10px; border-bottom: 2px solid var(--ink); margin-bottom: 12px;
+}
+.col-title small { font-size: 12px; font-weight: 500; color: var(--ink-3); margin-left: 6px; }
+.photo-box .col-title { position: static; padding: 10px 14px 8px; margin: 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.col .card { margin: 0 0 12px; }
+.col .loading { padding: 24px 0; }
+.btn.sm { padding: 5px 11px; font-size: 12.5px; }
+.price-sub { font-size: 13px; color: var(--ink-2); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.note { font-size: 12px; color: var(--ink-3); margin: 10px 0 0; line-height: 1.6; }
+.badge { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.badge.same { background: var(--gold); color: #fff; }
+
+/* 판단 요약 열 */
+.addr-block { margin-bottom: 12px; }
+.addr-block .pnu { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tile { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 11px; min-width: 0; }
+.tile .t-label { font-size: 11.5px; color: var(--ink-3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .t-value { font-size: 17px; font-weight: 800; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; margin: 3px 0 1px; line-height: 1.25; word-break: keep-all; }
+.tile .t-value small { font-size: 12px; font-weight: 600; color: var(--ink-3); margin-left: 2px; white-space: nowrap; }
+.tile.wide { grid-column: 1 / -1; }
+.tile .t-sub { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.tile.gold .t-value { color: var(--gold); }
+.tile.up .t-value { color: var(--warn); }
+.tile.down .t-value { color: var(--accent); }
+.summary-text { margin: 12px 0 14px; padding: 12px 13px; font-size: 13.5px; color: var(--ink); line-height: 1.75; background: var(--accent-soft); border-radius: var(--radius-sm); }
+.unit-note { font-size: 12px; color: var(--ink-2); margin: 4px 0 8px; }
+.disclaimer { font-size: 11.5px; color: var(--ink-3); line-height: 1.6; margin: 0 0 12px; }
+.print-box {
+  position: sticky; bottom: 0; z-index: 2; margin: 8px -14px 0; padding: 12px 14px 14px;
+  background: var(--surface); border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+}
+.col-summary { padding-bottom: 0; } /* 출력 박스가 열 바닥에 붙도록 (아래로 내용이 비치지 않게) */
+.print-box .btn { flex: 1; padding: 11px 16px; font-size: 14.5px; }
+.print-box small { font-size: 11.5px; color: var(--ink-3); text-align: center; }
+
+/* 거래내역 열 */
+.sales-stat { display: flex; flex-direction: column; gap: 2px; font-size: 13px; margin-bottom: 8px; }
+.filter { margin-bottom: 10px; }
+.month-head { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--ink-2); padding: 10px 2px 4px; border-bottom: 1px solid var(--border-strong); font-variant-numeric: tabular-nums; }
+.sale { padding: 9px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.sale:hover { background: var(--surface-2); }
+.sale.same { background: linear-gradient(90deg, var(--gold-soft), transparent 80%); }
+.sale-main { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.sale-main .amt { color: var(--gold); font-weight: 800; font-variant-numeric: tabular-nums; font-size: 14px; }
+.sale-main .ppy { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sale-main .sale-date { margin-left: auto; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sale-sub { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+
+/* 지도 위 법정동 거래 배지 */
+.umd-pin-wrap { background: none; border: 0; }
+.umd-pin {
+  transform: translate(-50%, -50%); white-space: nowrap; font-size: 11.5px; font-weight: 600;
+  padding: 3px 9px; border-radius: 999px; background: var(--surface); color: var(--ink-2);
+  border: 1.5px solid var(--gold); box-shadow: var(--shadow); cursor: pointer;
+}
+.umd-pin b { color: var(--gold); font-size: 13px; margin-right: 1px; }
+.umd-pin.same { background: var(--gold); color: #fff; border-color: var(--gold); }
+.umd-pin.same b { color: #fff; }
+.pop-row { margin-top: 6px; font-size: 12.5px; }
+
+/* 지가변동률 열 */
+.deep-ctl { flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; }
+.seg-btn { font: inherit; font-size: 12.5px; padding: 5px 10px; background: transparent; color: var(--ink-2); border: 0; cursor: pointer; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--border-strong); }
+.seg-btn.on { background: var(--accent); color: #fff; }
+.range-label { font-size: 12.5px; color: var(--ink); background: var(--surface-2); border-radius: 6px; padding: 7px 10px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.range-label b { color: var(--accent); }
+.chart-box { position: relative; }
+.lchart { width: 100%; height: auto; display: block; overflow: visible; }
+.lchart .g { stroke: var(--border); stroke-width: 1; }
+.lchart .g.zero { stroke: var(--ink-3); stroke-width: 1.2; }
+.lchart .yl, .lchart .xl { fill: var(--ink-3); font-size: 12px; font-family: var(--sans); font-variant-numeric: tabular-nums; }
+.lchart .axt { fill: var(--ink-2); font-size: 11.5px; font-weight: 700; font-family: var(--sans); }
+.lchart .ln { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.lchart .ar { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
+.lchart .dot, .lchart .hdot { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
+.lchart .guide { stroke: var(--ink-3); stroke-dasharray: 3 3; }
+.lchart .hit { fill: transparent; cursor: crosshair; }
+.ctip {
+  position: absolute; top: 0; pointer-events: none; font-size: 12px; font-weight: 700;
+  background: var(--ink); color: var(--surface); padding: 4px 8px; border-radius: 6px; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+table.zi-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 12px; font-variant-numeric: tabular-nums; }
+table.zi-table th, table.zi-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right; }
+table.zi-table th { color: var(--ink-3); font-weight: 600; font-size: 11.5px; position: sticky; top: 52px; background: var(--surface); }
+table.zi-table td:first-child, table.zi-table th:first-child { text-align: left; }
+table.zi-table td.up { color: var(--warn); }
+table.zi-table td.down { color: var(--accent); }
+
+/* 크게 보기 모달 */
+.modal { position: fixed; inset: 0; z-index: 2000; background: rgba(12, 18, 17, .55); display: grid; place-items: center; padding: 20px; }
+.modal-card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-lg); width: min(1000px, 100%); padding: 18px 20px; }
+.modal-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.modal-head .seg { margin-left: auto; }
+
+.dev-links { margin-top: 10px; font-size: 12.5px; }
+.dev-links a { margin: 0 6px; }
+.feat .step { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 10px; }
+
+@media (max-width: 1100px) {
+  .map-app.has-report { grid-template-columns: 1fr; grid-template-rows: auto 70vh auto; grid-template-areas: "panel" "geo" "res"; height: auto; }
+  .has-report .results { grid-template-columns: 1fr; border-left: 0; }
+  .col { overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
+  .col-title { position: static; }
+  .print-box { position: static; margin: 8px 0 0; }
+  /* 한 열로 쌓이면 판단 요약을 맨 위로 (가장 먼저 읽을 내용). */
+  .col-summary { order: -1; }
+}
+@media (max-width: 780px) {
+  .map-app { grid-template-areas: "geo" "panel"; }
+  .has-report .map-panel { flex-direction: column; align-items: stretch; }
+  .map-app.has-report { grid-template-rows: auto 60vh auto; }
+}
+
+/* ---- 리포트 출력 (A4) ---- */
+/* 출력 버튼이나 브라우저 인쇄 직전에 print-mode를 켜서, 지도가 인쇄 크기로 타일을
+   다시 받게 한다. 인쇄 순서: 제목 -> 사진·지도 -> 판단 요약 -> 지가변동률 -> 거래내역.
+   (길이가 긴 거래 목록을 맨 뒤로 보내 차트가 쪽 경계에서 잘리지 않게 한다.) */
+body.print-mode .topbar, body.print-mode .map-panel, body.print-mode .landing-foot,
+body.print-mode .no-print, body.print-mode .leaflet-control-zoom { display: none !important; }
+/* 화면에서도 A4 본문 폭(210mm - 여백 24mm)으로 줄여 두어야 지도가 인쇄 크기에 맞춰 다시 그려진다. */
+body.print-mode .map-app { display: block; height: auto; max-width: 186mm; margin: 0 auto; }
+body.print-mode .print-head { display: block; margin: 0 0 10px; }
+body.print-mode .col-geo { flex-direction: row; gap: 10px; height: 270px; margin-bottom: 12px; }
+body.print-mode .photo-box { display: flex; height: 100%; flex: 1 1 0; min-width: 0; border: 1px solid var(--border); }
+body.print-mode .photo-box .col-title { display: none; }
+body.print-mode .col-geo #map { height: 100%; flex: 1 1 0; min-width: 0; border: 1px solid var(--border); }
+body.print-mode .results { display: flex; flex-direction: column; border: 0; }
+body.print-mode .col { overflow: visible; border: 0; padding: 0; }
+body.print-mode .col-summary { order: 1; }
+body.print-mode .col-index { order: 2; }
+body.print-mode .col-sales { order: 3; }
+body.print-mode .col-title { position: static; font-size: 14px; padding: 12px 0 6px; }
+body.print-mode .sale, body.print-mode .tile, body.print-mode .card { break-inside: avoid; }
+/* 인쇄에서는 차트를 적당한 크기로, 월별 값 표는 3단으로 접어 쪽수를 줄인다. */
+body.print-mode #ziOut { max-width: 120mm; break-inside: avoid; }
+body.print-mode .range-label, body.print-mode .col-title, body.print-mode .month-head { break-after: avoid; }
+body.print-mode .sale { padding: 4px 2px; }
+body.print-mode table.zi-table, body.print-mode table.zi-table tbody { display: block; }
+body.print-mode table.zi-table thead { display: none; }
+body.print-mode table.zi-table tbody { columns: 3; column-gap: 18px; }
+body.print-mode table.zi-table tr { display: flex; justify-content: space-between; break-inside: avoid; border-bottom: 1px solid var(--border); }
+body.print-mode table.zi-table td { border: 0; padding: 2px 4px; }
+.print-head .ph-title { font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+.print-head .ph-meta { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+  /* 다크 테마로 보던 중이어도 종이에는 라이트 토큰으로 출력한다. */
+  :root:root {
+    color-scheme: light;
+    --bg: #fff; --surface: #fff; --surface-2: #f1f4f2; --surface-3: #e4eae7;
+    --ink: #14201c; --ink-2: #48534e; --ink-3: #6b746f; --border: #d6ddd9;
+    --border-strong: #c4cec9; --accent: #0f766e; --accent-2: #0b5c55;
+    --accent-soft: #e3f2ef; --gold: #a45a09; --gold-soft: #f8eedf;
+    --good: #15803d; --warn: #b45309; --neutral: #64748b;
+  }
+  body { background: #fff; }
+}

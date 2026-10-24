@@ -49,7 +49,8 @@ func TestEveryPageUsesBrandAsset(t *testing.T) {
 				`rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png"`,
 				`rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png"`,
 				`property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png"`,
-				`href="/styles.css?v=brand-c1abd2177e38"`,
+				// 스타일 변경 시 캐시 무효화 키도 함께 올린다 (2026-10 리포트 뷰 개편).
+				`href="/styles.css?v=ui-20261024"`,
 			} {
 				if !strings.Contains(html, required) {
 					t.Errorf("missing brand reference: %s", required)
