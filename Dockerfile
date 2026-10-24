@@ -6,7 +6,7 @@
 #   API키 발급:   docker run --rm -e B2D_DATABASE_URL=... --entrypoint /b2d-etl b2d-geo:latest apikey create --name x --scopes geo
 #
 # migrations는 go:embed로 바이너리에 내장되어 별도 COPY 불필요.
-FROM golang:1.26.5-alpine AS build
+FROM golang:1.26.10-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
