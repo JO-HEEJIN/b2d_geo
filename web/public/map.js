@@ -161,7 +161,9 @@ function colSales() {
        거래 신고 기한이 계약 후 30일이라 가장 최근 달은 아직 덜 집계됐을 수 있습니다.</p>`);
 }
 
-const ZONE_CLASSES = ["주거지역", "상업지역", "공업지역", "녹지지역"];
+// 지가변동률(R-ONE) 원자료의 용도지역 분류 9종. 운영 데이터에서 값이 있는 분류만 둔다.
+const ZONE_CLASSES = ["주거지역", "상업지역", "공업지역", "녹지지역", "계획관리지역", "생산관리지역",
+  "보전관리지역", "농림지역", "자연환경보전지역"];
 const RANGES = [["1년", 12], ["3년", 36], ["5년", 60], ["전체", 0]];
 let ziSeries = [];
 let ziRange = 36;
@@ -192,7 +194,7 @@ function colSummary() {
      ${disclaimerHTML()}
      <div class="print-box no-print">
        <button class="btn" id="printBtn" type="button">보고서 자동 작성 · 다운로드</button>
-       <small>A4 · 인쇄 창에서 "PDF로 저장"을 고르면 파일로 받습니다</small>
+       <small>A4 · 인쇄 창에서 "PDF로 저장" 선택</small>
      </div>`);
 }
 
@@ -273,7 +275,9 @@ function renderFeatures(f) {
 
 function renderLandUse(lu) {
   if (lu.status !== "fulfilled" || !lu.value.zones || !lu.value.zones.length) return "";
-  const zones = lu.value.zones;
+  // 용도지역을 맨 앞으로(나머지는 원자료 순서 유지). 6개만 보이므로 핵심 값이 "외 N개"에 묻히지 않게 한다.
+  const zones = lu.value.zones.slice().sort((a, b) =>
+    USE_ZONE_RE.test(b.zone_name || "") - USE_ZONE_RE.test(a.zone_name || ""));
   const shown = zones.slice(0, 6);
   const rows = shown
     .map(
@@ -295,19 +299,25 @@ function card404(title, msg) {
 }
 
 // ---------- 판단 요약 (타일 + 문장) ----------
-// 대표 용도지역: 원자료에서 "포함" 관계이고 이름이 "지역"으로 끝나는 첫 항목.
+// 대표 용도지역: 국토계획법 용도지역 이름과 정확히 맞는 항목만 고른다("포함" 우선).
+// 원자료에는 "공장설립제한지역", "도시지역"처럼 이름이 "지역"으로 끝나는 다른 지역·구역이
+// 함께 오므로, 끝말만 보면 엉뚱한 값을 고른다(2026-10-24 운영 데이터에서 확인).
+const USE_ZONE_RE = /^(제[12]종전용주거|제[123]종일반주거|준주거|주거|중심상업|일반상업|근린상업|유통상업|상업|전용공업|일반공업|준공업|공업|보전녹지|생산녹지|자연녹지|녹지|보전관리|생산관리|계획관리|관리|농림|자연환경보전)지역$/;
 function mainZone(zones) {
-  const z = zones.find((x) => x.relation === "포함" && /지역$/.test(x.zone_name || "")) ||
-            zones.find((x) => /지역$/.test(x.zone_name || ""));
+  const z = zones.find((x) => x.relation === "포함" && USE_ZONE_RE.test(x.zone_name || "")) ||
+            zones.find((x) => USE_ZONE_RE.test(x.zone_name || ""));
   return z ? z.zone_name : "";
 }
 
 function zoneClassOf(zoneName) {
+  for (const c of ["계획관리", "생산관리", "보전관리", "농림", "자연환경보전"]) {
+    if (zoneName.startsWith(c)) return c + "지역";
+  }
   if (/주거/.test(zoneName)) return "주거지역";
   if (/상업/.test(zoneName)) return "상업지역";
   if (/공업/.test(zoneName)) return "공업지역";
   if (/녹지/.test(zoneName)) return "녹지지역";
-  return "주거지역";
+  return "주거지역"; // 용도지역을 못 찾으면 기본값. 화면의 분류 선택과 범위 라벨에 그대로 드러난다.
 }
 
 function tile(label, value, sub, cls = "") {
@@ -339,7 +349,7 @@ function renderSummary() {
     const same = sameSales();
     const med = median(same.filter((x) => !x.share).map((x) => x.perPy));
     salesTile = tile(`${esc(R.umd || "같은 동")} ${SALES_MONTHS}개월 거래`, `${same.length}<small>건</small>`,
-      same.length ? (isFinite(med) ? `평당 중위 ${fmtManwonNum(med)} (지목 구분 없음, 지분거래 제외)` : "평당가 계산 불가") : `주변 전체 ${R.sales.items.length}건`, "wide");
+      same.length ? (isFinite(med) ? `평당 중위 ${fmtManwonNum(med)} (지목 구분 없음, 지분거래 제외)` : "모두 지분거래라 평당가 미산출") : `주변 전체 ${R.sales.items.length}건`, "wide");
   }
 
   let idxTile;
@@ -371,7 +381,7 @@ function summarySentences(zoneName, cat) {
     const med = median(same.filter((x) => !x.share).map((x) => x.perPy));
     if (same.length) {
       out.push(`같은 동(${esc(R.umd)})에서 최근 ${SALES_MONTHS}개월간 토지 거래 ${same.length}건이 신고됐고` +
-        (isFinite(med) ? `, 평당 거래가 중위값(지목 구분 없음, 지분거래 제외)은 약 ${fmtManwonNum(med)}입니다.` : " 평당가는 계산할 수 없습니다."));
+        (isFinite(med) ? `, 평당 거래가 중위값(지목 구분 없음, 지분거래 제외)은 약 ${fmtManwonNum(med)}입니다.` : ", 모두 지분거래라 평당가는 내지 않았습니다."));
     } else {
       out.push(`같은 동(${esc(R.umd)})의 최근 ${SALES_MONTHS}개월 토지 거래 신고는 없고, 주변(같은 시군구) 전체로는 ${R.sales.items.length}건입니다.`);
     }
@@ -534,7 +544,7 @@ function drawSalesMarkers() {
     const mk = L.marker([pt.lat, pt.lng], { icon, keyboard: true, title: `${umd} 거래 ${rows.length}건` })
       .bindPopup(`<b>${esc(umd)}</b> 최근 ${SALES_MONTHS}개월 ${rows.length}건${list}` +
         (rows.length > 5 ? `<div class="muted">외 ${rows.length - 5}건은 거래내역 열에서 확인</div>` : "") +
-        `<div class="muted" style="margin-top:4px">위치는 동 중심입니다 (지번 비공개).</div>`)
+        `<div class="muted" style="margin-top:4px">위치는 동 대표 지점입니다 (지번 비공개).</div>`)
       .addTo(salesLayer);
     salesMarkers.set(umd, mk);
   });
@@ -877,11 +887,14 @@ function relClass(rel) {
   if (rel === "저촉") return "저촉";
   return "접함";
 }
-// 시군구 이름: 법정동 전체명에서 마지막(읍면동)만 뺀다. 예) "경기도 하남시 신장동" -> "경기도 하남시"
+// 시군구 이름: 법정동 전체명에서 마지막 "시·군·구" 토막까지만 남긴다.
+// 예) "경기도 하남시 신장동" -> "경기도 하남시", "경기도 화성시 만세구 남양읍 남양리" -> "경기도 화성시 만세구"
 function sggName() {
   const full = (R && R.parcel && R.parcel.address_name) || "";
   const parts = full.trim().split(/\s+/);
-  return parts.length > 1 ? parts.slice(0, -1).join(" ") : (R ? R.sgg : "");
+  let end = -1;
+  for (let i = 0; i < parts.length - 1; i++) if (/(시|군|구)$/.test(parts[i])) end = i;
+  return end >= 0 ? parts.slice(0, end + 1).join(" ") : (R ? R.sgg : "");
 }
 function lastToken(s) {
   const parts = String(s).trim().split(/\s+/);
