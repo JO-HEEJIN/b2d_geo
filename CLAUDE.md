@@ -25,7 +25,7 @@
   MOIS 법정동코드 API 키 확보(.env `MOIS_API_KEY`, ETL 미착수).
 - Sentry 에러 추적 도입 (2026-08-08): panic/5xx 수집, X-Request-Id 태그 연동,
   DSN 비면 자동 비활성. GHCR 로그인 복구로 배포는 push → CI → VPS pull 정상화.
-- 컨설팅 반영 (2026-10-24, plan/consulting-ui-revamp를 main에 머지 → 이미지 빌드, VPS 반영은 사용자 수동): 표시명 "올맵",
+- 컨설팅 반영 (2026-10-24, 운영 배포 완료 sha-9d70560, deploy/DEPLOYMENT_2026-10-24.md): 표시명 "올맵",
   지도 화면 4열 리포트 + A4 보고서 출력, `/v1/appraisal/sales/recent` 신설. 항공사진은
   `B2D_VWORLD_KEY`가 있을 때만 켜진다. Phase 7 "V-World 실시간 연동 금지"는 항공사진 WMTS 타일만
   예외로 사용자 허용(2026-10-24). 현재 개발키 — 유료 판매 전 운영키 교체.
