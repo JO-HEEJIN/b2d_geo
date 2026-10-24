@@ -69,7 +69,7 @@ git config user.name "JO-HEEJIN" && git config user.email "midmost44@gmail.com"
 | `MOLIT_API_KEY` | 실거래(/v1/appraisal/sales)용 data.go.kr 키. **비면 실거래만 비활성** |
 | `B2D_DEMO_API_KEY` | 웹 try-it-out 데모 키 |
 | `B2D_SELF_SERVE_DEMO` | `true`면 개발자 셀프 키발급 노출 |
-| `B2D_VWORLD_KEY` | 지도 항공사진(V-World 영상 타일) 키. 브라우저 노출 전제, V-World에서 도메인 제한. **비면 토글 숨김** |
+| `B2D_VWORLD_KEY` | 지도 항공사진(V-World WMTS 영상 타일) 키. 브라우저 노출 전제, V-World에서 서비스 URL(도메인) 제한. **비면 토글 숨김**. 2026-10 현재 개발키(만료 있음) — 유료 판매 전 운영키로 교체 |
 | `SENTRY_DSN` | Sentry 에러 추적 DSN. **비면 Sentry 비활성(기존 로그만)** |
 | `SENTRY_ENVIRONMENT` | Sentry 환경 라벨 (기본 production) |
 
