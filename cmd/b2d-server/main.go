@@ -64,7 +64,15 @@ func main() {
 	if dsn == "" {
 		dsn = "postgres://b2d:b2d_local_dev@localhost:5433/b2d_geo"
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "db config invalid:", err)
+		os.Exit(1)
+	}
+	// API 요청의 쿼리 하나가 20초를 넘으면 DB가 끊는다. 느린 쿼리 몇 개가 연결 풀을 다 잡아
+	// 다른 요청까지 1분 넘게 멈추는 것을 막는다(2026-10-23 운영 장애). ETL은 별도 바이너리라 영향 없음.
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "20000"
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "db connect failed:", err)
 		os.Exit(1)

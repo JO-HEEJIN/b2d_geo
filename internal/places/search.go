@@ -76,9 +76,10 @@ func Nearby(ctx context.Context, pool *pgxpool.Pool, category string, lon, lat, 
 		       COALESCE(jibun_address,''), ST_X(geom), ST_Y(geom), 0::float8
 		FROM places
 		WHERE ($1 = '' OR category_code = $1)
+		  AND geom && ST_Expand(ST_SetSRID(ST_MakePoint($2,$3),4326), $6)
 		  AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($2,$3),4326)::geography, $4)
 		ORDER BY geom <-> ST_SetSRID(ST_MakePoint($2,$3),4326)
-		LIMIT $5`, category, lon, lat, radius, limit)
+		LIMIT $5`, category, lon, lat, radius, limit, radius/85000.0) // 상자 반폭 계산 근거는 revgeo.RadiusDeg
 	if err != nil {
 		return nil, err
 	}

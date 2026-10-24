@@ -544,7 +544,10 @@ vanilla JS + 기존 Leaflet만, 신규 서드파티 0개.
 - 상용화 백로그: 실거래 라우트 가중 rate limit 또는 일일 상류 예산.
 - [ ] 지가변동률 적재 범위 확대: 운영 DB는 2025.09~2026.06(10개월)뿐. 과거 3년 이상 + 2026.07 이후 월 갱신
 - [ ] Caddy 접근 로그 90일 파일 보관 적용(개인정보처리방침 문구와 일치시키기, Caddy 재시작 필요)
-- [ ] 2026-10-23 04:32 운영 500 묶음(요청 17건이 20초~1분 25초 대기 후 같은 초에 실패) 원인 조사
+- [x] 2026-10-23 04:32 운영 500 묶음 원인: 접경지(위도 38.2) 클릭의 reverse가 반경 200m 안에 건물이 없어
+      KNN이 전국 건물을 거리순으로 끝까지 훑음 -> 연결 풀 고갈 -> parcel·geocode까지 대기 후 일괄 취소.
+      수정: KNN 두 곳(revgeo, places.Nearby)에 geom && 상자 조건 추가(합성 150만 건 기준 7.6초 -> 6ms),
+      API 서버 풀에 statement_timeout 20초
 - [x] govulncheck 실패 해소 (2026-10-24, 96920c4): Docker 빌드 Go 1.26.5 -> 1.26.10, x/text v0.39.0 -> v0.41.0
       (GO-2026-6629), CI setup-go check-latest. 로컬 govulncheck "No vulnerabilities found".
 - 운영 DB 확인 필요: 화성 일반구·광주전남 통합 코드가 parcels/standard_lots에 어떤 코드로 있는지.
