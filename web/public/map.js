@@ -99,6 +99,7 @@ async function queryPoint(lat, lon, opts = {}) {
   ]);
   if (my !== queryId) return;
   R.price = price.status === "fulfilled" ? price.value : null;
+  R.regionOnRequest = regionNotLoaded(price);
   R.done.price = true;
   R.zones = landUse.status === "fulfilled" ? landUse.value.zones || [] : [];
   R.features = features.status === "fulfilled" ? features.value : null;
@@ -250,8 +251,23 @@ function priceTypeLabel(p) {
   return "공시지가"; // 모르는 값은 원문을 내보내지 않는다(innerHTML로 들어가는 자리)
 }
 
+// 개별공시지가·토지특성은 시도 단위로 골라 적재한다(Phase 7 선택 적재). 아직 적재하지 않은 시도면
+// 서버가 422 REGION_NOT_LOADED를 준다. 이 경우 "자료 없음"이 아니라 요청 시 제공으로 안내한다.
+const CONTACT_MAIL = "info@birth2death.com";
+function regionNotLoaded(settled) {
+  const e = settled.status === "rejected" ? settled.reason : null;
+  return !!(e && e.body && e.body.error && e.body.error.code === "REGION_NOT_LOADED");
+}
+function onRequestCard(title, josa) {
+  return `<div class="card"><header>${esc(title)}</header><div class="body muted">
+    이 지역의 ${esc(title)}${josa} 요청하시면 제공합니다.
+    <a href="mailto:${CONTACT_MAIL}?subject=${encodeURIComponent("올맵 지역 자료 요청")}">문의하기</a>
+  </div></div>`;
+}
+
 function renderPrice(price) {
-  if (price.status !== "fulfilled") return card404("공시지가", "이 지역은 아직 공시지가 데이터가 없습니다");
+  if (regionNotLoaded(price)) return onRequestCard("공시지가", "는");
+  if (price.status !== "fulfilled") return card404("공시지가", "이 필지의 공시지가 자료가 없습니다");
   const p = price.value;
   return `<div class="card"><header>공시지가 <span class="tag">${esc(p.base_year)}년</span></header><div class="body">
     <div class="price">${formatWon(p.price_per_sqm)}<span class="unit">원/㎡</span></div>
@@ -261,6 +277,7 @@ function renderPrice(price) {
 }
 
 function renderFeatures(f) {
+  if (regionNotLoaded(f)) return onRequestCard("토지특성", "은");
   if (f.status !== "fulfilled") return "";
   const v = f.value;
   return `<div class="card"><header>토지특성 <span class="tag">${esc(v.base_year || "")}</span></header><div class="body">
@@ -338,6 +355,7 @@ function renderSummary() {
 
   let priceTile;
   if (!R.done.price) priceTile = tile("공시지가", SPIN, "&nbsp;");
+  else if (!R.price && R.regionOnRequest) priceTile = tile("공시지가", "요청 시 제공", "이 지역은 문의 후 제공", "gold");
   else if (!R.price) priceTile = tile("공시지가", "-", "데이터 없음");
   else priceTile = tile("공시지가", `${formatWon(R.price.price_per_sqm)}<small>원/㎡</small>`,
     `평당 약 ${fmtManwonNum(perPyeongManwon(R.price.price_per_sqm))} · ${esc(R.price.base_year)}년`, "gold");
@@ -373,6 +391,7 @@ function renderSummary() {
 function summarySentences(zoneName, cat) {
   const out = [];
   out.push(`${zoneName ? esc(zoneName) + "에 속한 " : ""}지목 ${esc(cat || "미상")} 토지입니다.`);
+  if (!R.price && R.regionOnRequest) out.push("이 지역의 개별공시지가와 토지특성은 요청하시면 제공합니다.");
   if (R.price) {
     out.push(`${esc(R.price.base_year)}년 공시지가는 ㎡당 ${formatWon(R.price.price_per_sqm)}원(평당 약 ${fmtManwonNum(perPyeongManwon(R.price.price_per_sqm))})이며 ${priceTypeLabel(R.price)} 값입니다.`);
   }
