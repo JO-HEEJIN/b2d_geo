@@ -225,8 +225,15 @@ $RUN ned-sync --sido 36                              # 세종 시범 적재
 - `.env`를 바꾸면 바로 `evnx cloud push`. 바꾼 사람이 이력을 남긴다.
 
 ```sh
-# 서버에 1회 설치·연결 (install.sh는 받아서 내용을 본 뒤 실행)
-curl -fsSL https://evnx.dev/install.sh -o /tmp/evnx-install.sh && less /tmp/evnx-install.sh && bash /tmp/evnx-install.sh
+# 서버에 1회 설치. install.sh가 주는 glibc 빌드는 GLIBC_2.39(Ubuntu 24.04)를 요구해 이 서버(더 낮은 glibc)에서
+# "weak version GLIBC_2.39 not found" 경고가 난다(2026-10-28 확인). 정적 링크 musl 빌드를 직접 받아 쓴다.
+# evnx update는 glibc 빌드로 되돌릴 수 있으니 쓰지 말고, 올릴 때도 아래를 V만 바꿔 반복한다.
+V=v0.10.18; F=evnx-x86_64-unknown-linux-musl.tar.gz
+mkdir -p /tmp/evnx-musl ~/.local/bin && cd /tmp/evnx-musl
+curl -fsSLO https://github.com/urwithajit9/evnx/releases/download/$V/$F
+curl -fsSLO https://github.com/urwithajit9/evnx/releases/download/$V/$F.sha256
+sha256sum -c $F.sha256 && tar -xzf $F && install -m 755 evnx-x86_64-unknown-linux-musl ~/.local/bin/evnx
+cd ~ && rm -rf /tmp/evnx-musl
 evnx --version && evnx cloud --help >/dev/null && echo cloud-ok
 evnx auth login
 cd ~/b2d_geo/deploy
