@@ -55,3 +55,10 @@ docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --no-d
 - 운영 검증: map.js 캐시 키 `ui-20261025` 확인, 부산 연제구 주소에서 요청 시 제공 문구, 파주 주소에서 기존 공시지가·토지특성 정상,
   브라우저 오류 0.
 - 서버 디스크: 155G 중 80G 사용, 76G 여유 (`df -h /`, 2026-10-27).
+
+## 추가 배포 (2026-10-28): ned-sync 데몬
+
+- 이미지 `ghcr.io/jo-heejin/b2d_geo:sha-d41aab8`. override에 `app`과 함께 `ned-sync` 서비스 추가
+  (`/b2d-etl ned-sync --daemon --at 03:17 --max-calls 30000`), `up -d --no-deps --pull never app ned-sync`.
+- 기동 로그: `ned-sync: next run 2026-10-28 03:17 KST`. 서버 crontab은 쓰지 않음.
+- 같은 날 운영 `.env`를 evnx 금고 `b2d-geo/production`에 올림(왕복 바이트 비교 SAME), 평문 백업 2개 삭제.
