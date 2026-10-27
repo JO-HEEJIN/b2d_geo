@@ -589,7 +589,8 @@ To-do
 
 - [x] E-0. 자료 검토(evnx 발표 자료 78쪽): Rust CLI + zero-knowledge 동기화, v0.9.0(2026-10-05), 0.x 개발 중
 - [x] E-1. 저장소: .claude/settings.json에 .env 읽기 금지 규칙, OPS.md 7-2 절차
-- [ ] E-2. 사용자: 대화에 노출된 evnx 비밀번호 변경(evnx auth rotate-master-password 또는 웹)
-- [ ] E-3. 사용자(서버): evnx 설치 -> 로그인 -> 금고 b2d-geo/production 생성·연결 -> push -> 왕복 확인(SAME)
-- [ ] E-4. 사용자(서버): 평문 백업 .env.bak.20260808, .env.bak.sentry 삭제, .env 권한 600
+- [x] E-2. 사용자: 대화에 노출된 evnx 비밀번호 변경 (2026-10-28)
+- [x] E-3. 사용자(서버): evnx 0.10.18 정적(musl) 빌드 설치 -> 로그인 -> 금고 b2d-geo/production 생성·연결 -> push
+      -> 다른 폴더로 pull해 바이트 비교 SAME (2026-10-28)
+- [x] E-4. 사용자(서버): 평문 백업 .env.bak.20260808, .env.bak.sentry 삭제 (2026-10-28)
 - [ ] E-5. 다나클라우드 이전 시: 새 서버에서 cloud pull로 .env 복원
