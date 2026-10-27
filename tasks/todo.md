@@ -576,8 +576,8 @@ To-do
 - [x] N-2. internal/etl/ned: API 클라이언트(페이지·재시도·키 redact) + 행 변환 + 단위 테스트(실제 응답 모양)
       + 실 PostGIS 통합 테스트(B2D_TEST_DATABASE_URL: 적재·이어받기·한도·대조 모드)
 - [x] N-3. cmd/b2d-etl ned-sync (dataset, year, sido, max-calls, max-dongs, compare, pause)
-- [ ] N-4. Verification phase (분리): 이미 파일로 적재된 서울·경기 동 몇 곳을 API로 받아 DB와 필지별 대조
-      (공시지가 원단위, 토지특성 라벨 4종 일치 여부). 불일치 시 매핑 수정
+- [x] N-4. Verification phase (2026-10-28, 운영 서버 --compare): 서울 3개 동 1,311필지, 경기 3개 동 9,696필지에서
+      개별공시지가 원단위와 토지특성 라벨 4종이 8월 파일 적재분과 전부 일치(diff 0). 페이지당 1,000건 동작 확인
 - [ ] N-5. 세종(36) 1개 시도 시범 적재 -> 건수(totalCount 합)와 DB 행수 대조 -> 운영 화면에서 세종 주소 확인
 - [ ] N-6. 나머지 12개 시도 크론 등록(사용자 서버 작업 1회), 진행 상황 확인 명령 안내
 - [ ] N-7. learning_log, OPS.md(크론·재수집 절차), 지시서 예외 문구
