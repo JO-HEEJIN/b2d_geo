@@ -76,6 +76,22 @@ services:
     environment:
       B2D_API_BASE: http://app:8080/v1
 
+  # 개별공시지가·토지특성 자동 적재. 같은 이미지의 /b2d-etl ned-sync를 데몬으로 띄워 매일 03:17 KST에
+  # 브이월드 국가중점데이터 API에서 남은 법정동을 받는다(이어받기, 6월에 연도 자동 전환). 일정이 서버
+  # crontab이 아니라 이 파일에 있으므로 서버를 옮겨도 compose만 올리면 그대로 돈다. 로그: docker compose logs ned-sync
+  ned-sync:
+    image: ghcr.io/jo-heejin/b2d_geo:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/b2d-etl"]
+    command: ["ned-sync", "--daemon", "--at", "03:17", "--max-calls", "30000"]
+    environment:
+      B2D_DATABASE_URL: postgres://${POSTGRES_USER:-b2d}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-b2d_geo}?sslmode=disable
+      B2D_VWORLD_KEY: ${B2D_VWORLD_KEY:-}
+      B2D_VWORLD_DOMAIN: ${B2D_VWORLD_DOMAIN:-https://api.birth2death.com}
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

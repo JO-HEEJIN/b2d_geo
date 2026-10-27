@@ -141,15 +141,11 @@ $RUN ned-sync --sido 36                              # 세종 시범 적재
 - 연도: `--year` 생략 시 6월부터 올해, 그 전에는 작년(개별공시지가는 5월 말 공시).
 - 이어받기: `ned_sync_progress`에 동 단위로 기록. 중간에 끊겨도 다음 실행이 남은 동부터.
 - 한도: `--max-calls`에서 멈춤. 키·권한·한도 오류(APIError)도 그날 실행만 멈추고 다음 날 이어감.
-- 크론(호스트, 매일 03:17 KST = 18:17 UTC, 전국·자동 연도). 6월이 되면 연도가 바뀌어 전국을 다시 받는다:
-
-```sh
-mkdir -p ~/b2d_geo/logs
-( crontab -l 2>/dev/null; echo '17 18 * * * cd /home/ubuntu/b2d_geo/deploy && flock -n /tmp/ned-sync.lock docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm --no-deps --entrypoint /b2d-etl app ned-sync --max-calls 30000 >> /home/ubuntu/b2d_geo/logs/ned-sync.log 2>&1' ) | crontab -
-```
-
-- 진행 확인: `tail -5 ~/b2d_geo/logs/ned-sync.log`,
-  `docker compose exec db psql -U b2d -d b2d_geo -c "SELECT dataset, base_year, count(*) dongs, sum(rows) FROM ned_sync_progress GROUP BY 1,2"`.
+- 자동 실행은 서버 crontab이 아니라 compose 서비스 `ned-sync`(데몬, 매일 03:17 KST, `--max-calls 30000`)가 한다.
+  서버를 옮겨도 compose를 올리면 그대로 돈다. 운영 Lightsail은 base compose를 고정해 두는 정책이라 같은 서비스를
+  override에 넣어 띄운다(DEPLOYMENT_2026-10-24.md 참고). 시작 직후 한 번 바로 돌리려면 일회용으로 `$RUN ned-sync --max-calls 30000`.
+- 로그: `docker compose logs --tail 20 ned-sync`. 다음 실행 시각이 `ned-sync: next run ...`으로 찍힌다.
+- 진행 확인:   `docker compose exec db psql -U b2d -d b2d_geo -c "SELECT dataset, base_year, count(*) dongs, sum(rows) FROM ned_sync_progress GROUP BY 1,2"`.
 - 광주·전남은 필지가 통합 전 코드(29·46)라 API가 0건을 줄 수 있다(코드 정리 전까지 비어 있음).
 
 ## 7. "진짜 서비스" 백로그 (M1에서 이어서)
