@@ -611,6 +611,8 @@ To-do
 To-do
 - [ ] P-0. 사용자: R-ONE 인증키 발급(로그인 필요), 서버 .env에 RONE_API_KEY 추가 후 evnx cloud push
 - [ ] P-1. 서버에서 통계표 목록 조회 -> 용도지역별 월간 지가변동률 STATBL_ID와 분류(CLS)·항목(ITM) 구조 확인
+      (2026-10-28 견본 조회: A_2024_00903은 용도지역별이 아니라 "시도>시군구>읍면동" 지역별 월간 변동률,
+      202606 한 달 10,744행. 응답 필드 CLS_FULLNM·ITM_NM·DTA_VAL·WRTTIME_IDTFR_ID 확인. 용도지역별 표 ID는 아직 미확인)
 - [ ] P-2. impact 분석 후 크로스워크 세종 예외 + internal/etl/rone + rone-sync(백필·증분·--compare·--daemon) + 테스트
 - [ ] P-3. Verification phase: 기존 10개월과 API 값 대조(diff 0 기대), 세종 행 적재 확인
 - [ ] P-4. 운영 반영: 이미지 교체, override에 rone 데몬 추가, 백필 1회, 화면에서 3년 범위·세종 확인
