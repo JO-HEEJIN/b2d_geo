@@ -102,6 +102,10 @@ func Load(ctx context.Context, pool *pgxpool.Pool, jsonPath string) (*Stats, err
 			stats.Skipped++ // 집계/레거시 시도
 			continue
 		}
+		var code string
+		if full == SejongName {
+			code = SejongCode // 시군구 단계가 없어 크로스워크로는 못 찾는다
+		}
 		si, gu := strings.TrimSpace(row["2"]), strings.TrimSpace(row["3"])
 		if strings.HasPrefix(si, "(구)") || strings.HasPrefix(gu, "(구)") {
 			stats.Skipped++
@@ -111,10 +115,12 @@ func Load(ctx context.Context, pool *pgxpool.Pool, jsonPath string) (*Stats, err
 		if gu != "" && gu != si {
 			name += " " + gu // 시 + 자치구
 		}
-		code, ok := xwalk[name]
-		if !ok {
-			stats.Skipped++
-			continue
+		if code == "" {
+			code, ok = xwalk[name]
+			if !ok {
+				stats.Skipped++
+				continue
+			}
 		}
 		useZone := strings.TrimSpace(row["4"])
 		if useZone == "" {
@@ -164,9 +170,26 @@ func parseMonth(s string) string {
 	return fmt.Sprintf("%04d%02d", yi, mi)
 }
 
+// 세종특별자치시는 시군구 단계가 없어(법정동 이름이 "세종특별자치시 한솔동") "시도 시군구" 크로스워크에
+// 잡히지 않는다. 그래서 세종 행이 전부 스킵되어 지가변동률이 0건이었다(2026-10-28 확인). 시군구 코드를 직접 준다.
+const (
+	SejongName = "세종특별자치시"
+	SejongCode = "36110"
+)
+
+// SidoFull은 R-ONE 시도 약칭을 admin_areas 정식명으로 바꾼다. 없으면 "".
+func SidoFull(short string) string { return sidoFull[strings.TrimSpace(short)] }
+
+// Crosswalk는 "시도 시군구 [자치구]" 이름 -> 시군구 5자리 코드 맵이다(다른 적재기와 공유).
+func Crosswalk(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
+	return buildCrosswalk(ctx, pool)
+}
+
 // buildCrosswalk은 admin_areas(법정동, name="시도 시군구 [자치구] 읍면동")에서
 // "시도 시군구"와 "시도 시 자치구" 앞토큰 조합 → 5자리 시군구코드 맵을 만든다.
 // 파일은 평시군구면 "시도 시군구", 자치구면 "시도 시 자치구"로 질의하므로 둘 다 등록한다.
+// 구가 있는 시("경기도 수원시")처럼 한 이름이 여러 코드에 걸리면 그 이름은 뺀다. 그 행은 시 전체 집계라
+// 어느 한 구의 코드에 넣으면 그 구의 값을 덮어쓴다(이전에는 마지막에 읽힌 구 코드로 들어갔다).
 func buildCrosswalk(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT DISTINCT substr(bcode,1,5), split_part(name,' ',1), split_part(name,' ',2), split_part(name,' ',3)
@@ -176,6 +199,13 @@ func buildCrosswalk(ctx context.Context, pool *pgxpool.Pool) (map[string]string,
 	}
 	defer rows.Close()
 	m := map[string]string{}
+	ambiguous := map[string]bool{}
+	put := func(k, code string) {
+		if old, ok := m[k]; ok && old != code {
+			ambiguous[k] = true
+		}
+		m[k] = code
+	}
 	for rows.Next() {
 		var code, t1, t2, t3 string
 		if err := rows.Scan(&code, &t1, &t2, &t3); err != nil {
@@ -184,10 +214,13 @@ func buildCrosswalk(ctx context.Context, pool *pgxpool.Pool) (map[string]string,
 		if t1 == "" || t2 == "" {
 			continue
 		}
-		m[t1+" "+t2] = code
+		put(t1+" "+t2, code)
 		if t3 != "" {
-			m[t1+" "+t2+" "+t3] = code
+			put(t1+" "+t2+" "+t3, code)
 		}
+	}
+	for k := range ambiguous {
+		delete(m, k)
 	}
 	return m, rows.Err()
 }

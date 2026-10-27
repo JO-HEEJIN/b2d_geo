@@ -604,15 +604,21 @@ To-do
 
 설계
 - 한국부동산원 R-ONE Open API(SttsApiTblData.do, 키 필요)로 "(월) 용도지역별 지가변동률"을 받는 `rone-sync`.
-  처음 1회 2023.01부터 백필, 이후 매일 03:17 데몬에서 새 달만 받는다(ned-sync와 같은 일정, 같은 데몬 방식).
+  처음 1회 2005.01부터 백필(P-1a), 이후 매일 03:17 데몬에서 새 달만 받는다(ned-sync와 같은 일정, 같은 데몬 방식).
 - 지역 이름 -> 시군구 코드 매칭은 기존 크로스워크 재사용 + 세종 예외(36110) 추가. 파일 로더에도 같은 예외 적용.
 - 값은 원값 그대로 upsert(source='reb_rone_api'). 기존 파일 적재 10개월과 --compare로 대조해 검증.
 
 To-do
-- [ ] P-0. 사용자: R-ONE 인증키 발급(로그인 필요), 서버 .env에 RONE_API_KEY 추가 후 evnx cloud push
-- [ ] P-1. 서버에서 통계표 목록 조회 -> 용도지역별 월간 지가변동률 STATBL_ID와 분류(CLS)·항목(ITM) 구조 확인
+- [x] P-0. 사용자: R-ONE 인증키 발급, 서버 .env에 추가(25번째 줄, 길이 32 확인). evnx cloud push는 P-4에서 확인
+- [x] P-1. 서버에서 통계표 목록 조회 -> 용도지역별 월간 지가변동률 STATBL_ID와 분류(CLS)·항목(ITM) 구조 확인
       (2026-10-28 견본 조회: A_2024_00903은 용도지역별이 아니라 "시도>시군구>읍면동" 지역별 월간 변동률,
       202606 한 달 10,744행. 응답 필드 CLS_FULLNM·ITM_NM·DTA_VAL·WRTTIME_IDTFR_ID 확인. 용도지역별 표 ID는 아직 미확인)
-- [ ] P-2. impact 분석 후 크로스워크 세종 예외 + internal/etl/rone + rone-sync(백필·증분·--compare·--daemon) + 테스트
+- [x] P-1a. 확인 결과(2026-10-28): A_2024_00007 = (월) 용도지역별 지가변동률, 202606 한 달 2,344행, 2005.01부터 있음.
+      CLS 10종(관리(통합)지역 포함), GRP 306종: "세종" 1단계, "경기>화성시>만세구" 3단계, "전남광주>광주>광산구",
+      "인천>(구)동구" 등. 백필 시작을 계획의 2023.01에서 2005.01로 넓힘(1회 약 800호출, --from으로 조정 가능)
+- [x] P-2. impact 분석 후 크로스워크 세종 예외 + internal/etl/rone + rone-sync(백필·증분·--compare·--daemon) + 테스트
+      (impact: buildCrosswalk LOW, runNedSync LOW, zoneClassOf LOW. detect-changes는 b2d-etl main 수정 때문에
+      critical로 나오나 main은 case 1개 추가뿐. 크로스워크에서 여러 코드에 걸리는 이름(구가 있는 시) 제외,
+      화면 관리지역 -> 관리(통합)지역 연결 포함. 단위 테스트 + 실 PostGIS 통합 테스트 통과)
 - [ ] P-3. Verification phase: 기존 10개월과 API 값 대조(diff 0 기대), 세종 행 적재 확인
 - [ ] P-4. 운영 반영: 이미지 교체, override에 rone 데몬 추가, 백필 1회, 화면에서 3년 범위·세종 확인

@@ -24,6 +24,7 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/ned"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/officialprice"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/rone"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/standardlots"
 	"github.com/JO-HEEJIN/b2d_geo/internal/store"
@@ -32,7 +33,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -109,6 +110,11 @@ func main() {
 	case "ned-sync":
 		if err := runNedSync(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "ned-sync failed:", err)
+			os.Exit(1)
+		}
+	case "rone-sync":
+		if err := runRoneSync(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "rone-sync failed:", err)
 			os.Exit(1)
 		}
 	case "juso":
@@ -436,34 +442,92 @@ func runNedSync(ctx context.Context, args []string) error {
 	if !*daemon {
 		return once(ctx)
 	}
+	return daily(ctx, "ned-sync", *at, *runNow, once)
+}
 
-	hh, mm, err := ned.ParseClock(*at)
+// daily는 매일 at(KST, HH:MM)에 once를 한 번씩 돌리며 기다린다(compose 데몬용). 실패해도 죽지 않고 다음 날
+// 다시 시도한다. 컨테이너 중지(SIGTERM) 시 진행 중인 단위만 버리고 끝낸다. 끝낸 단위는 DB에 남아 다음에 이어진다.
+func daily(ctx context.Context, name, at string, runNow bool, once func(context.Context) error) error {
+	hh, mm, err := ned.ParseClock(at)
 	if err != nil {
 		return err
 	}
-	// 컨테이너 중지(SIGTERM) 시 진행 중인 동만 버리고 깔끔히 끝낸다. 끝낸 동은 기록돼 있어 다음에 이어진다.
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	if *runNow {
+	if runNow {
 		if err := once(ctx); err != nil && ctx.Err() == nil {
-			fmt.Println("ned-sync: run failed:", err) // 데몬은 죽지 않고 다음 날 다시 시도
+			fmt.Printf("%s: run failed: %v\n", name, err)
 		}
 	}
 	for {
 		next := ned.NextRun(time.Now(), hh, mm)
-		fmt.Printf("ned-sync: next run %s\n", next.Format("2006-01-02 15:04 MST"))
+		fmt.Printf("%s: next run %s\n", name, next.Format("2006-01-02 15:04 MST"))
 		t := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			fmt.Println("ned-sync: stopped")
+			fmt.Printf("%s: stopped\n", name)
 			return nil
 		case <-t.C:
 		}
 		if err := once(ctx); err != nil && ctx.Err() == nil {
-			fmt.Println("ned-sync: run failed:", err)
+			fmt.Printf("%s: run failed: %v\n", name, err)
 		}
 	}
+}
+
+// runRoneSync: b2d-etl rone-sync [--from 200501] [--to YYYYMM] [--refetch 3] [--compare]
+// [--daemon --at 03:17 [--run-now]] — 한국부동산원 R-ONE Open API에서 (월) 용도지역별 지가변동률을 받아
+// land_price_index에 적재한다. 처음엔 --from부터 백필하고, 이후엔 아직 없는 달과 마지막 --refetch개월만 받는다.
+// --compare는 쓰지 않고 범위 안의 모든 달을 DB와 대조만 한다(검증용). 키는 env RONE_API_KEY.
+func runRoneSync(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("rone-sync", flag.ContinueOnError)
+	from := fs.String("from", "200501", "시작 월 YYYYMM")
+	to := fs.String("to", "", "끝 월 YYYYMM. 비면 실행 시점의 이번 달(KST)")
+	refetch := fs.Int("refetch", 3, "이미 받은 달 중 마지막 N개월은 다시 받음")
+	pause := fs.Duration("pause", 300*time.Millisecond, "호출 사이 간격")
+	cmp := fs.Bool("compare", false, "적재하지 않고 DB와 대조만")
+	daemon := fs.Bool("daemon", false, "매일 --at(KST)에 실행하며 계속 대기")
+	at := fs.String("at", "03:17", "--daemon 실행 시각(KST, HH:MM)")
+	runNow := fs.Bool("run-now", false, "--daemon 시작 직후 한 번 먼저 실행")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	key := os.Getenv("RONE_API_KEY")
+	if key == "" {
+		return fmt.Errorf("RONE_API_KEY is empty")
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	once := func(ctx context.Context) error {
+		o := rone.Options{From: *from, To: *to, Refetch: *refetch, Compare: *cmp, Log: os.Stdout}
+		if o.To == "" {
+			o.To = time.Now().In(ned.KST).Format("200601") // 데몬은 실행할 때마다 새 달을 범위에 넣는다
+		}
+		c := &rone.Client{Key: key, Pause: *pause}
+		st, err := rone.Run(ctx, pool, c, o)
+		fmt.Printf("rone-sync: months=%d rows=%d records=%d aggregate=%d unmapped=%d superseded=%d dup=%d calls=%d no_data=%v\n",
+			st.Months, st.Rows, st.Records, st.Aggregate, st.Unmapped, st.Superseded, st.Dup, st.Calls, st.NoData)
+		if len(st.Unknown) > 0 {
+			fmt.Printf("rone-sync: unmapped regions: %s\n", strings.Join(st.Unknown, ", "))
+		}
+		if o.Compare {
+			cs := st.Cmp
+			fmt.Printf("compare: api_records=%d in_db=%d same=%d diff=%d only_db=%d\n", cs.APIRecords, cs.InDB, cs.Same, cs.Diff, cs.OnlyDB)
+			for _, e := range cs.Examples {
+				fmt.Println("  ", e)
+			}
+		}
+		return err
+	}
+	if !*daemon {
+		return once(ctx)
+	}
+	return daily(ctx, "rone-sync", *at, *runNow, once)
 }
 
 // runEntrance: b2d-etl entrance <zip...> — 출입구 전체분 적재 (buildings).

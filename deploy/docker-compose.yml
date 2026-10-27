@@ -92,6 +92,20 @@ services:
       B2D_VWORLD_KEY: ${B2D_VWORLD_KEY:-}
       B2D_VWORLD_DOMAIN: ${B2D_VWORLD_DOMAIN:-https://api.birth2death.com}
 
+  # 지가변동률 자동 적재. 매일 03:17 KST에 R-ONE Open API에서 (월) 용도지역별 지가변동률 중 아직 없는 달과
+  # 마지막 3개월을 받는다(첫 실행은 2005-01부터 백필). 로그: docker compose logs rone-sync
+  rone-sync:
+    image: ghcr.io/jo-heejin/b2d_geo:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/b2d-etl"]
+    command: ["rone-sync", "--daemon", "--at", "03:17"]
+    environment:
+      B2D_DATABASE_URL: postgres://${POSTGRES_USER:-b2d}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-b2d_geo}?sslmode=disable
+      RONE_API_KEY: ${RONE_API_KEY:-}
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

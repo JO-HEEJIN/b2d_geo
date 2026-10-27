@@ -148,6 +148,24 @@ $RUN ned-sync --sido 36                              # 세종 시범 적재
 - 진행 확인:   `docker compose exec db psql -U b2d -d b2d_geo -c "SELECT dataset, base_year, count(*) dongs, sum(rows) FROM ned_sync_progress GROUP BY 1,2"`.
 - 광주·전남은 필지가 통합 전 코드(29·46)라 API가 0건을 줄 수 있다(코드 정리 전까지 비어 있음).
 
+## 6-3. 지가변동률 자동 적재 (rone-sync, 2026-10-28 도입)
+
+한국부동산원 R-ONE Open API 통계표 `A_2024_00007`((월) 용도지역별 지가변동률)을 받아 `land_price_index`에
+넣는다(source `reb_rone_api`). 키는 `.env`의 `RONE_API_KEY`. 6-2와 같은 `$RUN`으로 일회용 실행한다.
+
+```sh
+$RUN rone-sync --from 202509 --to 202606 --compare   # 검증: 포털 파일로 넣은 10개월과 대조(쓰지 않음)
+$RUN rone-sync                                       # 백필: 2005-01부터 이번 달까지(약 260개월 x 3호출)
+```
+
+- 이어받기: 받은 달은 DB에 남는다. 다음 실행은 아직 없는 달 + 마지막 3개월(`--refetch`)만 받는다.
+- 아직 공표 전인 달은 `no_data=[...]`로 찍히고 다음 날 다시 시도한다.
+- 지역 매핑: 시도 약칭 + 시군구 이름을 주소 DB(admin_areas)에서 찾는다. 세종은 36110 고정. "전남광주>광주>X"는
+  광주광역시, "전남광주>Y"는 전라남도. "(구)X"는 같은 코드에 현재 이름 행이 없을 때만 쓴다. 구가 있는 시의 시 전체
+  행("경기>수원시")은 집계라 건너뛴다. 못 찾은 지역은 `unmapped regions:`로 찍힌다.
+- 자동 실행: compose 서비스 `rone-sync`(데몬, 매일 03:17 KST, ned-sync와 같은 시각). 운영 Lightsail은 override에 같은 서비스를 넣어 띄운다.
+- 로그: `docker compose logs --tail 20 rone-sync`.
+
 ## 7. "진짜 서비스" 백로그 (M1에서 이어서)
 
 지금도 세 부류(일반인·개발자·감평사) 조회는 다 되지만, 상용화하려면:

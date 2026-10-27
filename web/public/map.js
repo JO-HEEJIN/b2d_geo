@@ -164,7 +164,7 @@ function colSales() {
 
 // 지가변동률(R-ONE) 원자료의 용도지역 분류 9종. 운영 데이터에서 값이 있는 분류만 둔다.
 const ZONE_CLASSES = ["주거지역", "상업지역", "공업지역", "녹지지역", "계획관리지역", "생산관리지역",
-  "보전관리지역", "농림지역", "자연환경보전지역"];
+  "보전관리지역", "관리(통합)지역", "농림지역", "자연환경보전지역"];
 const RANGES = [["1년", 12], ["3년", 36], ["5년", 60], ["전체", 0]];
 let ziSeries = [];
 let ziRange = 36;
@@ -330,6 +330,7 @@ function zoneClassOf(zoneName) {
   for (const c of ["계획관리", "생산관리", "보전관리", "농림", "자연환경보전"]) {
     if (zoneName.startsWith(c)) return c + "지역";
   }
+  if (zoneName === "관리지역") return "관리(통합)지역"; // 세분 안 된 관리지역. R-ONE은 이 이름으로 따로 낸다
   if (/주거/.test(zoneName)) return "주거지역";
   if (/상업/.test(zoneName)) return "상업지역";
   if (/공업/.test(zoneName)) return "공업지역";
