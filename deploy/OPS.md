@@ -125,6 +125,33 @@ git config user.name "JO-HEEJIN" && git config user.email "midmost44@gmail.com"
   ```
   (LIKE/유사도 경로는 기존 GIN trgm 인덱스 `idx_buildings_norm_road_trgm`가 이미 처리.)
 
+## 6-2. 개별공시지가·토지특성 자동 적재 (ned-sync, 2026-10-28 도입)
+
+브이월드 국가중점데이터 API로 법정동 단위 적재. 앱 이미지 안의 `/b2d-etl ned-sync`를 일회용 컨테이너로 돌린다
+(운영 앱 컨테이너는 건드리지 않음). 키는 `.env`의 `B2D_VWORLD_KEY`(override가 app 환경으로 넘김).
+
+```sh
+cd ~/b2d_geo/deploy
+RUN="docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm --no-deps --entrypoint /b2d-etl app"
+$RUN migrate                                         # 최초 1회: 013_ned_sync_progress
+$RUN ned-sync --sido 11 --max-dongs 3 --compare      # 검증: 파일 적재분과 대조(쓰지 않음)
+$RUN ned-sync --sido 36                              # 세종 시범 적재
+```
+
+- 연도: `--year` 생략 시 6월부터 올해, 그 전에는 작년(개별공시지가는 5월 말 공시).
+- 이어받기: `ned_sync_progress`에 동 단위로 기록. 중간에 끊겨도 다음 실행이 남은 동부터.
+- 한도: `--max-calls`에서 멈춤. 키·권한·한도 오류(APIError)도 그날 실행만 멈추고 다음 날 이어감.
+- 크론(호스트, 매일 03:17 KST = 18:17 UTC, 전국·자동 연도). 6월이 되면 연도가 바뀌어 전국을 다시 받는다:
+
+```sh
+mkdir -p ~/b2d_geo/logs
+( crontab -l 2>/dev/null; echo '17 18 * * * cd /home/ubuntu/b2d_geo/deploy && flock -n /tmp/ned-sync.lock docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm --no-deps --entrypoint /b2d-etl app ned-sync --max-calls 30000 >> /home/ubuntu/b2d_geo/logs/ned-sync.log 2>&1' ) | crontab -
+```
+
+- 진행 확인: `tail -5 ~/b2d_geo/logs/ned-sync.log`,
+  `docker compose exec db psql -U b2d -d b2d_geo -c "SELECT dataset, base_year, count(*) dongs, sum(rows) FROM ned_sync_progress GROUP BY 1,2"`.
+- 광주·전남은 필지가 통합 전 코드(29·46)라 API가 0건을 줄 수 있다(코드 정리 전까지 비어 있음).
+
 ## 7. "진짜 서비스" 백로그 (M1에서 이어서)
 
 지금도 세 부류(일반인·개발자·감평사) 조회는 다 되지만, 상용화하려면:

@@ -554,7 +554,7 @@ vanilla JS + 기존 Leaflet만, 신규 서드파티 0개.
       (GO-2026-6629), CI setup-go check-latest. 로컬 govulncheck "No vulnerabilities found".
 - 운영 DB 확인 필요: 화성 일반구·광주전남 통합 코드가 parcels/standard_lots에 어떤 코드로 있는지.
 
-## 개별공시지가·토지특성 자동 적재 (브이월드 국가중점데이터 API) — 2026-10-28 계획, 승인 대기
+## 개별공시지가·토지특성 자동 적재 (브이월드 국가중점데이터 API) — 2026-10-28 계획, 사용자 승인
 
 배경: 브이월드 파일 다운로드는 브라우저 로그인 세션으로만 내려와(서버 curl은 200·0바이트) 자동화할 수 없다.
 로봇 로그인은 크롤러 금지 규칙과 충돌한다. 대신 국가중점데이터 API를 서버에서 확인했다(2026-10-28):
@@ -571,10 +571,11 @@ vanilla JS + 기존 Leaflet만, 신규 서드파티 0개.
 - 요청 경로에서는 API를 부르지 않는다(사용자 응답은 항상 우리 DB 스냅샷).
 
 To-do
-- [ ] N-0. 사용자 승인: Phase 7 "데이터 API 금지"에 배치 ETL 예외 추가, 범위 확정
-- [ ] N-1. impact 분석(etl 진입점), 마이그레이션 013 ned_sync_progress
-- [ ] N-2. internal/etl/ned: API 클라이언트(페이지·재시도·키 redact) + 응답 -> 행 변환 + 테스트(고정 JSON)
-- [ ] N-3. cmd/b2d-etl ned-sync (dataset, year, sido, max-calls 옵션)
+- [x] N-0. 사용자 승인 (2026-10-28): 배치 ETL만 예외 허용(지시서에 문구 추가), 범위는 세종 시범 후 전국 + 연 1회 갱신
+- [x] N-1. impact: b2d-etl main은 진입점(호출자 없음), 서브커맨드 추가만. 마이그레이션 013 ned_sync_progress
+- [x] N-2. internal/etl/ned: API 클라이언트(페이지·재시도·키 redact) + 행 변환 + 단위 테스트(실제 응답 모양)
+      + 실 PostGIS 통합 테스트(B2D_TEST_DATABASE_URL: 적재·이어받기·한도·대조 모드)
+- [x] N-3. cmd/b2d-etl ned-sync (dataset, year, sido, max-calls, max-dongs, compare, pause)
 - [ ] N-4. Verification phase (분리): 이미 파일로 적재된 서울·경기 동 몇 곳을 API로 받아 DB와 필지별 대조
       (공시지가 원단위, 토지특성 라벨 4종 일치 여부). 불일치 시 매핑 수정
 - [ ] N-5. 세종(36) 1개 시도 시범 적재 -> 건수(totalCount 합)와 DB 행수 대조 -> 운영 화면에서 세종 주소 확인

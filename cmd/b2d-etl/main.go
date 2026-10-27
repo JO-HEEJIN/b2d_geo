@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landfeature"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landsales"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landuse"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/ned"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/officialprice"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
@@ -28,7 +30,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -100,6 +102,11 @@ func main() {
 	case "land-features":
 		if err := runLandFeatures(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "land-features failed:", err)
+			os.Exit(1)
+		}
+	case "ned-sync":
+		if err := runNedSync(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "ned-sync failed:", err)
 			os.Exit(1)
 		}
 	case "juso":
@@ -350,6 +357,74 @@ func runLandFeatures(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("land-features: rows=%d final=%d skipped=%d\n", stats.Rows, stats.Final, stats.Skipped)
 	return nil
+}
+
+// runNedSync: b2d-etl ned-sync [--dataset price,features] [--year 2026] [--sido 26,27] [--max-calls N]
+// [--max-dongs N] [--compare] — 브이월드 국가중점데이터 API로 개별공시지가·토지특성을 법정동 단위로 받아
+// 적재한다(이어받기). --compare는 쓰지 않고 이미 있는 DB 값과 대조만 한다(검증용).
+// 키는 env B2D_VWORLD_KEY, 등록 서비스 URL은 env B2D_VWORLD_DOMAIN(기본 https://api.birth2death.com).
+func runNedSync(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("ned-sync", flag.ContinueOnError)
+	datasets := fs.String("dataset", "price,features", "price,features 중 쉼표로")
+	year := fs.Int("year", 0, "기준연도. 0이면 6월부터 올해, 그 전에는 작년(개별공시지가는 5월 말 공시)")
+	sido := fs.String("sido", "", "시도 2자리 코드, 쉼표로. 비면 전국")
+	maxCalls := fs.Int("max-calls", 0, "이만큼 호출하면 멈춤(0=제한 없음)")
+	maxDongs := fs.Int("max-dongs", 0, "법정동 수 제한(0=제한 없음)")
+	pause := fs.Duration("pause", 200*time.Millisecond, "호출 사이 간격")
+	cmp := fs.Bool("compare", false, "적재하지 않고 DB와 대조만")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	key := os.Getenv("B2D_VWORLD_KEY")
+	if key == "" {
+		return fmt.Errorf("B2D_VWORLD_KEY is empty")
+	}
+	domain := os.Getenv("B2D_VWORLD_DOMAIN")
+	if domain == "" {
+		domain = "https://api.birth2death.com"
+	}
+	y := *year
+	if y == 0 {
+		now := time.Now().In(time.FixedZone("KST", 9*60*60))
+		y = now.Year()
+		if now.Month() < time.June {
+			y--
+		}
+	}
+	o := ned.Options{Year: y, MaxCalls: *maxCalls, MaxDongs: *maxDongs, Compare: *cmp, Log: os.Stdout}
+	for _, d := range strings.Split(*datasets, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			o.Datasets = append(o.Datasets, ned.Dataset(d))
+		}
+	}
+	for _, sd := range strings.Split(*sido, ",") {
+		if sd = strings.TrimSpace(sd); sd != "" {
+			if len(sd) != 2 {
+				return fmt.Errorf("sido must be 2 digits: %q", sd)
+			}
+			o.Sido = append(o.Sido, sd)
+		}
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	c := &ned.Client{Key: key, Domain: domain, Pause: *pause}
+	st, err := ned.Run(ctx, pool, c, o)
+	fmt.Printf("ned-sync: year=%d dongs=%d rows=%d calls=%d", y, st.Dongs, st.Rows, st.Calls)
+	if st.Stopped != "" {
+		fmt.Printf(" stopped=%q", st.Stopped)
+	}
+	fmt.Println()
+	if o.Compare {
+		cs := st.Cmp
+		fmt.Printf("compare: api_rows=%d in_db=%d same=%d diff=%d\n", cs.APIRows, cs.InDB, cs.Same, cs.Diff)
+		for _, e := range cs.Examples {
+			fmt.Println("  ", e)
+		}
+	}
+	return err
 }
 
 // runEntrance: b2d-etl entrance <zip...> — 출입구 전체분 적재 (buildings).
