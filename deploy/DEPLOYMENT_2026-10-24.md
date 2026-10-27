@@ -46,3 +46,12 @@ docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --no-d
 | V-World 타일 요청 | 올바른 WMTS URL로 요청됨. 실제 사진 표시는 검증 환경에서 V-World 접속이 막혀 브라우저 확인 필요 |
 
 소량의 정상 요청 검증이며 부하 테스트는 하지 않았다.
+
+## 추가 배포 (2026-10-27)
+
+- 이미지 `ghcr.io/jo-heejin/b2d_geo:sha-b3a5de1` (digest `sha256:b9df8fb4f40a0ec3de95492ba43f78f0cd35100e87179ff44b67cfe2f3a6ccc5`).
+  같은 방식으로 override 태그만 교체.
+- 내용: 개별공시지가·토지특성 미적재 지역(REGION_NOT_LOADED)에서 "요청하시면 제공합니다"와 문의 메일 링크 표시.
+- 운영 검증: map.js 캐시 키 `ui-20261025` 확인, 부산 연제구 주소에서 요청 시 제공 문구, 파주 주소에서 기존 공시지가·토지특성 정상,
+  브라우저 오류 0.
+- 서버 디스크: 155G 중 80G 사용, 76G 여유 (`df -h /`, 2026-10-27).
