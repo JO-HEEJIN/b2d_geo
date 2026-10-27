@@ -214,7 +214,7 @@ $RUN ned-sync --sido 36                              # 세종 시범 적재
 
 ## 7-2. 운영 .env 관리: evnx (2026-10-28 도입)
 
-운영 `.env`(키·DB 비밀번호)의 원본을 evnx 금고 `b2d_geo/production`에 암호화해 둔다. evnx 서버는 암호문만
+운영 `.env`(키·DB 비밀번호)의 원본을 evnx 금고 `b2d-geo/production`에 암호화해 둔다. evnx 서버는 암호문만
 보관하고 값을 읽지 못한다(zero-knowledge, Argon2 + AES-GCM). 목적은 세 가지다: 평문 백업 파일(`.env.bak.*`)을
 없애고, `.env` 변경 이력을 버전으로 남기고, 서버를 옮길 때 `.env`를 손으로 옮기지 않는 것.
 
@@ -237,17 +237,17 @@ cd ~ && rm -rf /tmp/evnx-musl
 evnx --version && evnx cloud --help >/dev/null && echo cloud-ok
 evnx auth login
 cd ~/b2d_geo/deploy
-evnx vault create b2d_geo --env production
-evnx cloud link b2d_geo/production          # ./.evnx.toml 생성(금고 이름만, 비밀 아님)
+evnx vault create b2d-geo --env production
+evnx cloud link b2d-geo/production          # ./.evnx.toml 생성(금고 이름만, 비밀 아님)
 evnx cloud push                             # 마스터 비밀번호 입력 -> 버전 1
 evnx cloud history
 
 # 왕복 확인: 다른 폴더로 받아 현재 파일과 같은지(값은 화면에 찍지 않음)
-mkdir -p /tmp/evnx-check && cd /tmp/evnx-check && evnx cloud pull --vault b2d_geo/production \
+mkdir -p /tmp/evnx-check && cd /tmp/evnx-check && evnx cloud pull --vault b2d-geo/production \
   && cmp -s .env ~/b2d_geo/deploy/.env && echo SAME; rm -rf /tmp/evnx-check; cd ~/b2d_geo/deploy
 
 # 새 서버(예: 다나클라우드)에서
-evnx auth login && cd ~/b2d_geo/deploy && evnx cloud pull --vault b2d_geo/production   # .env 0600으로 기록
+evnx auth login && cd ~/b2d_geo/deploy && evnx cloud pull --vault b2d-geo/production   # .env 0600으로 기록
 ```
 
 ## 8. 보안 메모
