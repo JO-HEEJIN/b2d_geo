@@ -212,6 +212,37 @@ $RUN ned-sync --sido 36                              # 세종 시범 적재
 - 기존 키는 마이그레이션 시 tier='demo', monthly_cap=0(캡 없음)으로 남아 동작 불변.
   운영 키의 티어 라벨을 바꾸려면: `UPDATE api_keys SET tier='standard', monthly_cap=<n> WHERE id=<id>;`
 
+## 7-2. 운영 .env 관리: evnx (2026-10-28 도입)
+
+운영 `.env`(키·DB 비밀번호)의 원본을 evnx 금고 `b2d_geo/production`에 암호화해 둔다. evnx 서버는 암호문만
+보관하고 값을 읽지 못한다(zero-knowledge, Argon2 + AES-GCM). 목적은 세 가지다: 평문 백업 파일(`.env.bak.*`)을
+없애고, `.env` 변경 이력을 버전으로 남기고, 서버를 옮길 때 `.env`를 손으로 옮기지 않는 것.
+
+원칙
+- 운영 컨테이너는 evnx에 의존하지 않는다. 서버의 `.env`(권한 600)는 그대로 쓰고, evnx는 원본·이력·이전 수단이다.
+  evnx가 0.x(개발 중)이고 1인 개발이라, 배포가 그 서버 가용성에 묶이지 않게 하려는 것이다.
+- 마스터 비밀번호는 서버에 저장하지 않는다. push·pull 때 사람이 입력한다. 대화·문서·커밋에 쓰지 않는다.
+- `.env`를 바꾸면 바로 `evnx cloud push`. 바꾼 사람이 이력을 남긴다.
+
+```sh
+# 서버에 1회 설치·연결 (install.sh는 받아서 내용을 본 뒤 실행)
+curl -fsSL https://evnx.dev/install.sh -o /tmp/evnx-install.sh && less /tmp/evnx-install.sh && bash /tmp/evnx-install.sh
+evnx --version && evnx cloud --help >/dev/null && echo cloud-ok
+evnx auth login
+cd ~/b2d_geo/deploy
+evnx vault create b2d_geo --env production
+evnx cloud link b2d_geo/production          # ./.evnx.toml 생성(금고 이름만, 비밀 아님)
+evnx cloud push                             # 마스터 비밀번호 입력 -> 버전 1
+evnx cloud history
+
+# 왕복 확인: 다른 폴더로 받아 현재 파일과 같은지(값은 화면에 찍지 않음)
+mkdir -p /tmp/evnx-check && cd /tmp/evnx-check && evnx cloud pull --vault b2d_geo/production \
+  && cmp -s .env ~/b2d_geo/deploy/.env && echo SAME; rm -rf /tmp/evnx-check; cd ~/b2d_geo/deploy
+
+# 새 서버(예: 다나클라우드)에서
+evnx auth login && cd ~/b2d_geo/deploy && evnx cloud pull --vault b2d_geo/production   # .env 0600으로 기록
+```
+
 ## 8. 보안 메모
 
 - `.pem` 키·`.env`·`*_snapshot.dump`는 `.gitignore` 처리됨 — 커밋 금지.
