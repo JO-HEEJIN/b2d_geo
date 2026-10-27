@@ -553,3 +553,30 @@ vanilla JS + 기존 Leaflet만, 신규 서드파티 0개.
 - [x] govulncheck 실패 해소 (2026-10-24, 96920c4): Docker 빌드 Go 1.26.5 -> 1.26.10, x/text v0.39.0 -> v0.41.0
       (GO-2026-6629), CI setup-go check-latest. 로컬 govulncheck "No vulnerabilities found".
 - 운영 DB 확인 필요: 화성 일반구·광주전남 통합 코드가 parcels/standard_lots에 어떤 코드로 있는지.
+
+## 개별공시지가·토지특성 자동 적재 (브이월드 국가중점데이터 API) — 2026-10-28 계획, 승인 대기
+
+배경: 브이월드 파일 다운로드는 브라우저 로그인 세션으로만 내려와(서버 curl은 200·0바이트) 자동화할 수 없다.
+로봇 로그인은 크롤러 금지 규칙과 충돌한다. 대신 국가중점데이터 API를 서버에서 확인했다(2026-10-28):
+- `getIndvdLandPriceAttr`, `getLandCharacteristics` 모두 지금 키로 응답, 법정동 10자리(pnu=4145010600)로
+  그 동 필지 전체를 페이지 단위 조회(totalCount 3122). 필드: pnu, stdrYear, pblntfPclnd(원/㎡), lastUpdtDt,
+  ladUseSittnNm(토지이용상황), tpgrphHgCodeNm(지형높이), tpgrphFrmCodeNm(지형형상), roadSideCodeNm(도로접면).
+
+설계 (앱 코드 무변경, 같은 테이블에 같은 컬럼으로 적재)
+- ETL 서브커맨드 `ned-sync`: 법정동 목록(parcels의 실제 bcode)을 돌며 API를 1,000건씩 페이지 조회 ->
+  official_land_prices / land_features upsert. source='vworld_ned', source_version=lastUpdtDt.
+- 진행 기록 테이블(마이그레이션 013)로 동 단위 이어받기. 호출 한도 오류면 멈추고 다음 날 이어서.
+- 서버 크론: 매일 새벽 한도 안에서 미완료 동을 채움. 전국이 끝나면 연 1회(6월, 5월 말 공시 후) 재수집.
+- 키는 서버 env B2D_VWORLD_KEY에서만 읽고 로그에 남기지 않는다(MOLIT 키와 같은 redact).
+- 요청 경로에서는 API를 부르지 않는다(사용자 응답은 항상 우리 DB 스냅샷).
+
+To-do
+- [ ] N-0. 사용자 승인: Phase 7 "데이터 API 금지"에 배치 ETL 예외 추가, 범위 확정
+- [ ] N-1. impact 분석(etl 진입점), 마이그레이션 013 ned_sync_progress
+- [ ] N-2. internal/etl/ned: API 클라이언트(페이지·재시도·키 redact) + 응답 -> 행 변환 + 테스트(고정 JSON)
+- [ ] N-3. cmd/b2d-etl ned-sync (dataset, year, sido, max-calls 옵션)
+- [ ] N-4. Verification phase (분리): 이미 파일로 적재된 서울·경기 동 몇 곳을 API로 받아 DB와 필지별 대조
+      (공시지가 원단위, 토지특성 라벨 4종 일치 여부). 불일치 시 매핑 수정
+- [ ] N-5. 세종(36) 1개 시도 시범 적재 -> 건수(totalCount 합)와 DB 행수 대조 -> 운영 화면에서 세종 주소 확인
+- [ ] N-6. 나머지 12개 시도 크론 등록(사용자 서버 작업 1회), 진행 상황 확인 명령 안내
+- [ ] N-7. learning_log, OPS.md(크론·재수집 절차), 지시서 예외 문구
