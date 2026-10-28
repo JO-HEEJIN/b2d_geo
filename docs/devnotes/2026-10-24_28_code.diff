@@ -1,0 +1,4626 @@
+# 올맵(b2d_geo) 2026-10-24 ~ 2026-10-28 세션의 코드 전체 변경분 (읽기용)
+# 생성: git diff 85d7602^ c9c574a -- . ':(exclude)*.md' ':(exclude)docs/devnotes'
+# 문서(.md)는 제외했다. 같은 내용은 git show <커밋>으로도 볼 수 있다. 적용(apply)용이 아니다.
+# 설명은 같은 폴더의 2026-10-24_28_devnote.md
+
+diff --git a/.claude/settings.json b/.claude/settings.json
+new file mode 100644
+index 0000000..3ea1a63
+--- /dev/null
++++ b/.claude/settings.json
+@@ -0,0 +1,10 @@
++{
++  "permissions": {
++    "deny": [
++      "Read(**/.env)",
++      "Read(**/.env.bak*)",
++      "Read(**/.env.local)",
++      "Read(**/.env.production)"
++    ]
++  }
++}
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index ec2ef0a..835fc67 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -13,6 +13,8 @@ jobs:
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.26"
++          # 러너에 캐시된 옛 패치가 아니라 최신 1.26.x로 검사한다(govulncheck가 표준 라이브러리 취약점을 잡도록).
++          check-latest: true
+       - name: go vet
+         run: go vet ./...
+       - name: go test
+diff --git a/Dockerfile b/Dockerfile
+index 1d2bc11..859b578 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -6,7 +6,7 @@
+ #   API키 발급:   docker run --rm -e B2D_DATABASE_URL=... --entrypoint /b2d-etl b2d-geo:latest apikey create --name x --scopes geo
+ #
+ # migrations는 go:embed로 바이너리에 내장되어 별도 COPY 불필요.
+-FROM golang:1.26.5-alpine AS build
++FROM golang:1.26.10-alpine AS build
+ WORKDIR /src
+ COPY go.mod go.sum ./
+ RUN go mod download
+diff --git a/cmd/b2d-etl/main.go b/cmd/b2d-etl/main.go
+index f177916..25d5c9b 100644
+--- a/cmd/b2d-etl/main.go
++++ b/cmd/b2d-etl/main.go
+@@ -7,7 +7,10 @@ import (
+ 	"flag"
+ 	"fmt"
+ 	"os"
++	"os/signal"
+ 	"strings"
++	"syscall"
++	"time"
+ 
+ 	"github.com/jackc/pgx/v5/pgxpool"
+ 
+@@ -18,8 +21,10 @@ import (
+ 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landfeature"
+ 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landsales"
+ 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/landuse"
++	"github.com/JO-HEEJIN/b2d_geo/internal/etl/ned"
+ 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/officialprice"
+ 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
++	"github.com/JO-HEEJIN/b2d_geo/internal/etl/rone"
+ 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
+ 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/standardlots"
+ 	"github.com/JO-HEEJIN/b2d_geo/internal/store"
+@@ -28,7 +33,7 @@ import (
+ 
+ func main() {
+ 	if len(os.Args) < 2 {
+-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|apikey|download|load|index>")
++		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|apikey|download|load|index>")
+ 		os.Exit(2)
+ 	}
+ 
+@@ -102,6 +107,16 @@ func main() {
+ 			fmt.Fprintln(os.Stderr, "land-features failed:", err)
+ 			os.Exit(1)
+ 		}
++	case "ned-sync":
++		if err := runNedSync(context.Background(), os.Args[2:]); err != nil {
++			fmt.Fprintln(os.Stderr, "ned-sync failed:", err)
++			os.Exit(1)
++		}
++	case "rone-sync":
++		if err := runRoneSync(context.Background(), os.Args[2:]); err != nil {
++			fmt.Fprintln(os.Stderr, "rone-sync failed:", err)
++			os.Exit(1)
++		}
+ 	case "juso":
+ 		if err := runJuso(context.Background(), os.Args[2:]); err != nil {
+ 			fmt.Fprintln(os.Stderr, "juso failed:", err)
+@@ -352,6 +367,169 @@ func runLandFeatures(ctx context.Context, args []string) error {
+ 	return nil
+ }
+ 
++// runNedSync: b2d-etl ned-sync [--dataset price,features] [--year 2026] [--sido 26,27] [--max-calls N]
++// [--max-dongs N] [--compare] [--daemon --at 03:17 [--run-now]] — 브이월드 국가중점데이터 API로
++// 개별공시지가·토지특성을 법정동 단위로 받아 적재한다(이어받기). --compare는 쓰지 않고 이미 있는 DB 값과
++// 대조만 한다(검증용). --daemon은 매일 --at(KST)에 한 번씩 돌며 기다린다. 일정이 서버 crontab이 아니라
++// compose 서비스로 코드와 함께 움직이게 하려는 것이다(서버 이전 시 다시 등록할 필요 없음).
++// 키는 env B2D_VWORLD_KEY, 등록 서비스 URL은 env B2D_VWORLD_DOMAIN(기본 https://api.birth2death.com).
++func runNedSync(ctx context.Context, args []string) error {
++	fs := flag.NewFlagSet("ned-sync", flag.ContinueOnError)
++	datasets := fs.String("dataset", "price,features", "price,features 중 쉼표로")
++	year := fs.Int("year", 0, "기준연도. 0이면 실행할 때마다 6월부터 올해, 그 전에는 작년(개별공시지가는 5월 말 공시)")
++	sido := fs.String("sido", "", "시도 2자리 코드, 쉼표로. 비면 전국")
++	maxCalls := fs.Int("max-calls", 0, "한 번 실행에서 이만큼 호출하면 멈춤(0=제한 없음)")
++	maxDongs := fs.Int("max-dongs", 0, "법정동 수 제한(0=제한 없음)")
++	pause := fs.Duration("pause", 200*time.Millisecond, "호출 사이 간격")
++	cmp := fs.Bool("compare", false, "적재하지 않고 DB와 대조만")
++	daemon := fs.Bool("daemon", false, "매일 --at(KST)에 실행하며 계속 대기")
++	at := fs.String("at", "03:17", "--daemon 실행 시각(KST, HH:MM)")
++	runNow := fs.Bool("run-now", false, "--daemon 시작 직후 한 번 먼저 실행")
++	if err := fs.Parse(args); err != nil {
++		return err
++	}
++	key := os.Getenv("B2D_VWORLD_KEY")
++	if key == "" {
++		return fmt.Errorf("B2D_VWORLD_KEY is empty")
++	}
++	domain := os.Getenv("B2D_VWORLD_DOMAIN")
++	if domain == "" {
++		domain = "https://api.birth2death.com"
++	}
++	o := ned.Options{MaxCalls: *maxCalls, MaxDongs: *maxDongs, Compare: *cmp, Log: os.Stdout}
++	for _, d := range strings.Split(*datasets, ",") {
++		if d = strings.TrimSpace(d); d != "" {
++			o.Datasets = append(o.Datasets, ned.Dataset(d))
++		}
++	}
++	for _, sd := range strings.Split(*sido, ",") {
++		if sd = strings.TrimSpace(sd); sd != "" {
++			if len(sd) != 2 {
++				return fmt.Errorf("sido must be 2 digits: %q", sd)
++			}
++			o.Sido = append(o.Sido, sd)
++		}
++	}
++	pool, err := pgxpool.New(ctx, dbDSN())
++	if err != nil {
++		return err
++	}
++	defer pool.Close()
++
++	// 한 번 실행. 연도는 실행 시점마다 다시 정하므로 데몬이 6월을 넘기면 자동으로 새 연도를 받는다.
++	once := func(ctx context.Context) error {
++		o := o
++		o.Year = *year
++		if o.Year == 0 {
++			o.Year = ned.AutoYear(time.Now())
++		}
++		c := &ned.Client{Key: key, Domain: domain, Pause: *pause}
++		st, err := ned.Run(ctx, pool, c, o)
++		fmt.Printf("ned-sync: year=%d dongs=%d rows=%d calls=%d", o.Year, st.Dongs, st.Rows, st.Calls)
++		if st.Stopped != "" {
++			fmt.Printf(" stopped=%q", st.Stopped)
++		}
++		fmt.Println()
++		if o.Compare {
++			cs := st.Cmp
++			fmt.Printf("compare: api_rows=%d in_db=%d same=%d diff=%d\n", cs.APIRows, cs.InDB, cs.Same, cs.Diff)
++			for _, e := range cs.Examples {
++				fmt.Println("  ", e)
++			}
++		}
++		return err
++	}
++	if !*daemon {
++		return once(ctx)
++	}
++	return daily(ctx, "ned-sync", *at, *runNow, once)
++}
++
++// daily는 매일 at(KST, HH:MM)에 once를 한 번씩 돌리며 기다린다(compose 데몬용). 실패해도 죽지 않고 다음 날
++// 다시 시도한다. 컨테이너 중지(SIGTERM) 시 진행 중인 단위만 버리고 끝낸다. 끝낸 단위는 DB에 남아 다음에 이어진다.
++func daily(ctx context.Context, name, at string, runNow bool, once func(context.Context) error) error {
++	hh, mm, err := ned.ParseClock(at)
++	if err != nil {
++		return err
++	}
++	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
++	defer stop()
++	if runNow {
++		if err := once(ctx); err != nil && ctx.Err() == nil {
++			fmt.Printf("%s: run failed: %v\n", name, err)
++		}
++	}
++	for {
++		next := ned.NextRun(time.Now(), hh, mm)
++		fmt.Printf("%s: next run %s\n", name, next.Format("2006-01-02 15:04 MST"))
++		t := time.NewTimer(time.Until(next))
++		select {
++		case <-ctx.Done():
++			t.Stop()
++			fmt.Printf("%s: stopped\n", name)
++			return nil
++		case <-t.C:
++		}
++		if err := once(ctx); err != nil && ctx.Err() == nil {
++			fmt.Printf("%s: run failed: %v\n", name, err)
++		}
++	}
++}
++
++// runRoneSync: b2d-etl rone-sync [--from 200501] [--to YYYYMM] [--refetch 3] [--compare]
++// [--daemon --at 03:17 [--run-now]] — 한국부동산원 R-ONE Open API에서 (월) 용도지역별 지가변동률을 받아
++// land_price_index에 적재한다. 처음엔 --from부터 백필하고, 이후엔 아직 없는 달과 마지막 --refetch개월만 받는다.
++// --compare는 쓰지 않고 범위 안의 모든 달을 DB와 대조만 한다(검증용). 키는 env RONE_API_KEY.
++func runRoneSync(ctx context.Context, args []string) error {
++	fs := flag.NewFlagSet("rone-sync", flag.ContinueOnError)
++	from := fs.String("from", "200501", "시작 월 YYYYMM")
++	to := fs.String("to", "", "끝 월 YYYYMM. 비면 실행 시점의 이번 달(KST)")
++	refetch := fs.Int("refetch", 3, "이미 받은 달 중 마지막 N개월은 다시 받음")
++	pause := fs.Duration("pause", 300*time.Millisecond, "호출 사이 간격")
++	cmp := fs.Bool("compare", false, "적재하지 않고 DB와 대조만")
++	daemon := fs.Bool("daemon", false, "매일 --at(KST)에 실행하며 계속 대기")
++	at := fs.String("at", "03:17", "--daemon 실행 시각(KST, HH:MM)")
++	runNow := fs.Bool("run-now", false, "--daemon 시작 직후 한 번 먼저 실행")
++	if err := fs.Parse(args); err != nil {
++		return err
++	}
++	key := os.Getenv("RONE_API_KEY")
++	if key == "" {
++		return fmt.Errorf("RONE_API_KEY is empty")
++	}
++	pool, err := pgxpool.New(ctx, dbDSN())
++	if err != nil {
++		return err
++	}
++	defer pool.Close()
++
++	once := func(ctx context.Context) error {
++		o := rone.Options{From: *from, To: *to, Refetch: *refetch, Compare: *cmp, Log: os.Stdout}
++		if o.To == "" {
++			o.To = time.Now().In(ned.KST).Format("200601") // 데몬은 실행할 때마다 새 달을 범위에 넣는다
++		}
++		c := &rone.Client{Key: key, Pause: *pause}
++		st, err := rone.Run(ctx, pool, c, o)
++		fmt.Printf("rone-sync: months=%d rows=%d records=%d aggregate=%d unmapped=%d superseded=%d dup=%d calls=%d no_data=%v\n",
++			st.Months, st.Rows, st.Records, st.Aggregate, st.Unmapped, st.Superseded, st.Dup, st.Calls, st.NoData)
++		if len(st.Unknown) > 0 {
++			fmt.Printf("rone-sync: unmapped regions: %s\n", strings.Join(st.Unknown, ", "))
++		}
++		if o.Compare {
++			cs := st.Cmp
++			fmt.Printf("compare: api_records=%d in_db=%d same=%d diff=%d only_db=%d\n", cs.APIRecords, cs.InDB, cs.Same, cs.Diff, cs.OnlyDB)
++			for _, e := range cs.Examples {
++				fmt.Println("  ", e)
++			}
++		}
++		return err
++	}
++	if !*daemon {
++		return once(ctx)
++	}
++	return daily(ctx, "rone-sync", *at, *runNow, once)
++}
++
+ // runEntrance: b2d-etl entrance <zip...> — 출입구 전체분 적재 (buildings).
+ func runEntrance(ctx context.Context, args []string) error {
+ 	if len(args) == 0 {
+diff --git a/cmd/b2d-server/main.go b/cmd/b2d-server/main.go
+index bc50687..30850c0 100644
+--- a/cmd/b2d-server/main.go
++++ b/cmd/b2d-server/main.go
+@@ -64,7 +64,15 @@ func main() {
+ 	if dsn == "" {
+ 		dsn = "postgres://b2d:b2d_local_dev@localhost:5433/b2d_geo"
+ 	}
+-	pool, err := pgxpool.New(context.Background(), dsn)
++	cfg, err := pgxpool.ParseConfig(dsn)
++	if err != nil {
++		fmt.Fprintln(os.Stderr, "db config invalid:", err)
++		os.Exit(1)
++	}
++	// API 요청의 쿼리 하나가 20초를 넘으면 DB가 끊는다. 느린 쿼리 몇 개가 연결 풀을 다 잡아
++	// 다른 요청까지 1분 넘게 멈추는 것을 막는다(2026-10-23 운영 장애). ETL은 별도 바이너리라 영향 없음.
++	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "20000"
++	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+ 	if err != nil {
+ 		fmt.Fprintln(os.Stderr, "db connect failed:", err)
+ 		os.Exit(1)
+diff --git a/deploy/.env.example b/deploy/.env.example
+index aa99a41..429c3fc 100644
+--- a/deploy/.env.example
++++ b/deploy/.env.example
+@@ -19,6 +19,17 @@ B2D_DEMO_API_KEY=
+ # true면 /issue-demo-key(개발자 셀프 발급) 노출. 공개 미리보기에서만 켜세요.
+ B2D_SELF_SERVE_DEMO=false
+ 
++# V-World(국토교통부 공간정보 오픈플랫폼) 키. 지도 화면의 항공사진 토글에 쓰입니다.
++# 타일 URL에 들어가 브라우저에 노출되므로 V-World 관리 화면에서 서비스 URL(도메인)을
++# 이 사이트 도메인으로 제한하세요. 비우면 항공사진 토글이 숨겨집니다.
++B2D_VWORLD_KEY=
++# 브이월드에 등록한 서비스 URL. ned-sync(국가중점데이터 API 자동 적재)가 domain 파라미터로 보낸다.
++# 도메인을 옮기면 브이월드 키 설정과 함께 바꾼다. 비면 https://api.birth2death.com
++B2D_VWORLD_DOMAIN=
++
++# 한국부동산원 R-ONE Open API 인증키. rone-sync(지가변동률 자동 적재)만 쓴다(서버 안에서만, 브라우저 노출 없음).
++RONE_API_KEY=
++
+ # 실제 Caddy 프록시의 IP/CIDR만 허용. 비우면 전달 헤더를 신뢰하지 않습니다.
+ # 값은 네트워크를 확인한 후 설정하세요. 0.0.0.0/0, ::/0 사용 금지.
+ # 자세한 검증/Cloudflare 연결 조건은 RUNTIME_CACHE_RATE_LIMIT.md 참고.
+diff --git a/deploy/docker-compose.yml b/deploy/docker-compose.yml
+index 33d2722..e38d33b 100644
+--- a/deploy/docker-compose.yml
++++ b/deploy/docker-compose.yml
+@@ -53,6 +53,7 @@ services:
+       MOLIT_API_KEY: ${MOLIT_API_KEY:-}
+       B2D_DEMO_API_KEY: ${B2D_DEMO_API_KEY:-}
+       B2D_SELF_SERVE_DEMO: ${B2D_SELF_SERVE_DEMO:-false}
++      B2D_VWORLD_KEY: ${B2D_VWORLD_KEY:-}
+       B2D_TRUSTED_PROXY_CIDRS: ${B2D_TRUSTED_PROXY_CIDRS:-}
+       B2D_AUTH_CACHE_TTL: ${B2D_AUTH_CACHE_TTL:-30s}
+       # Sentry 에러 추적 (비면 비활성 — 서버는 기존 로그만으로 동작)
+@@ -75,6 +76,36 @@ services:
+     environment:
+       B2D_API_BASE: http://app:8080/v1
+ 
++  # 개별공시지가·토지특성 자동 적재. 같은 이미지의 /b2d-etl ned-sync를 데몬으로 띄워 매일 03:17 KST에
++  # 브이월드 국가중점데이터 API에서 남은 법정동을 받는다(이어받기, 6월에 연도 자동 전환). 일정이 서버
++  # crontab이 아니라 이 파일에 있으므로 서버를 옮겨도 compose만 올리면 그대로 돈다. 로그: docker compose logs ned-sync
++  ned-sync:
++    image: ghcr.io/jo-heejin/b2d_geo:latest
++    restart: unless-stopped
++    depends_on:
++      db:
++        condition: service_healthy
++    entrypoint: ["/b2d-etl"]
++    command: ["ned-sync", "--daemon", "--at", "03:17", "--max-calls", "30000"]
++    environment:
++      B2D_DATABASE_URL: postgres://${POSTGRES_USER:-b2d}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-b2d_geo}?sslmode=disable
++      B2D_VWORLD_KEY: ${B2D_VWORLD_KEY:-}
++      B2D_VWORLD_DOMAIN: ${B2D_VWORLD_DOMAIN:-https://api.birth2death.com}
++
++  # 지가변동률 자동 적재. 매일 03:17 KST에 R-ONE Open API에서 (월) 용도지역별 지가변동률 중 아직 없는 달과
++  # 마지막 3개월을 받는다(첫 실행은 2005-01부터 백필). 로그: docker compose logs rone-sync
++  rone-sync:
++    image: ghcr.io/jo-heejin/b2d_geo:latest
++    restart: unless-stopped
++    depends_on:
++      db:
++        condition: service_healthy
++    entrypoint: ["/b2d-etl"]
++    command: ["rone-sync", "--daemon", "--at", "03:17"]
++    environment:
++      B2D_DATABASE_URL: postgres://${POSTGRES_USER:-b2d}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-b2d_geo}?sslmode=disable
++      RONE_API_KEY: ${RONE_API_KEY:-}
++
+   caddy:
+     image: caddy:2-alpine
+     restart: unless-stopped
+diff --git a/go.mod b/go.mod
+index 82c7744..2d3fa92 100644
+--- a/go.mod
++++ b/go.mod
+@@ -2,19 +2,19 @@ module github.com/JO-HEEJIN/b2d_geo
+ 
+ go 1.26.4
+ 
+-toolchain go1.26.5
++toolchain go1.26.10
+ 
+ require (
+ 	github.com/getsentry/sentry-go v0.48.0
+ 	github.com/jackc/pgx/v5 v5.10.0
+ 	github.com/jonas-p/go-shp v0.1.1
+-	golang.org/x/text v0.39.0
++	golang.org/x/text v0.41.0
+ )
+ 
+ require (
+ 	github.com/jackc/pgpassfile v1.0.0 // indirect
+ 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+ 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+-	golang.org/x/sync v0.21.0 // indirect
++	golang.org/x/sync v0.22.0 // indirect
+ 	golang.org/x/sys v0.45.0 // indirect
+ )
+diff --git a/go.sum b/go.sum
+index c43bb04..efd00b9 100644
+--- a/go.sum
++++ b/go.sum
+@@ -31,12 +31,12 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
+ github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+ go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
+ go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
+-golang.org/x/sync v0.21.0 h1:HLII4xRRTtCRkxYp4HNFF0Js/Og6q2i++KXbg0gHCwM=
+-golang.org/x/sync v0.21.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
++golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
++golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
+ golang.org/x/sys v0.45.0 h1:dO4czNzziLiiXplLQgBCEpCvXQ3dnkn0SdaZSYdQ+FY=
+ golang.org/x/sys v0.45.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+-golang.org/x/text v0.39.0 h1:UbZz4pLOvn600D6Oh6GGEI6VAmndrEBLv8/6BEXzyus=
+-golang.org/x/text v0.39.0/go.mod h1:3UwRclnC2g0TU9x8PZiyfOajCd1zaUNHF9cvqcQZ+ZM=
++golang.org/x/text v0.41.0 h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=
++golang.org/x/text v0.41.0/go.mod h1:jvf1O8ajNzZqhSrQBPbutR/EB83Cc0CFrezNQIwbb5M=
+ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+ gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+diff --git a/internal/api/sales_recent.go b/internal/api/sales_recent.go
+new file mode 100644
+index 0000000..e6d6ae3
+--- /dev/null
++++ b/internal/api/sales_recent.go
+@@ -0,0 +1,261 @@
++package api
++
++import (
++	"context"
++	"encoding/xml"
++	"fmt"
++	"log"
++	"net/http"
++	"net/url"
++	"strconv"
++	"sync"
++	"time"
++)
++
++// ---- 실거래 최근 N개월 묶음 + 법정동 중심점 (지도 화면용 집계, 사실 반환) ----
++//
++// 브라우저가 월별로 /v1/appraisal/sales를 여러 번 부르면 demo 티어(2 rps, burst 4)에서
++// 429가 난다. 그래서 서버가 월별 MOLIT 호출을 모아 한 번에 응답한다. MOLIT 토지 실거래는
++// 지번이 마스킹되어 필지 단위 위치를 알 수 없으므로, 지도 표시는 법정동 대표점까지만
++// 제공한다. admin_areas.geom(법정동 폴리곤)은 미적재라(learning_log 2-4), 전국 적재된
++// 표준지(standard_lots) 좌표의 법정동별 평균을 대표점으로 쓴다. 평가·판단·보정 없음.
++
++const (
++	salesRecentDefaultMonths = 3
++	salesRecentMaxMonths     = 6
++	molitCacheTTL            = 6 * time.Hour
++	molitCacheMax            = 512  // 넘치면 만료 항목부터, 그래도 차 있으면 한 개만 비운다
++	molitPageRows            = 1000 // MOLIT 한 페이지 행 수. 이만큼 오면 잘렸다고 표시한다
++	umdPointsLimit           = 600
++)
++
++// kst는 거래월 계산 기준 시간대다. distroless 이미지에 tzdata가 없어도 동작하도록
++// LoadLocation 대신 고정 오프셋을 쓴다(한국은 서머타임 없음).
++var kst = time.FixedZone("KST", 9*60*60)
++
++type molitCacheEntry struct {
++	items []molitItem
++	at    time.Time
++}
++
++// molitCache는 (시군구, 거래월) -> MOLIT 응답 항목 캐시다. data.go.kr 일일 호출 한도를
++// 보호하고, 같은 지역을 연달아 조회할 때 응답을 빠르게 한다.
++type molitCache struct {
++	mu sync.Mutex
++	m  map[string]molitCacheEntry
++}
++
++var salesCache = &molitCache{m: map[string]molitCacheEntry{}}
++
++func (c *molitCache) get(key string, now time.Time) ([]molitItem, bool) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	e, ok := c.m[key]
++	if !ok || now.Sub(e.at) > molitCacheTTL {
++		return nil, false
++	}
++	return e.items, true
++}
++
++func (c *molitCache) put(key string, items []molitItem, now time.Time) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if len(c.m) >= molitCacheMax {
++		// 통째로 비우면 남의 지역 조회 몇십 번으로 캐시 전체를 날릴 수 있다(QA MED-2).
++		// 만료된 것부터 지우고, 그래도 가득이면 임의의 한 개만 지운다(정확한 LRU는 불필요).
++		for k, e := range c.m {
++			if now.Sub(e.at) > molitCacheTTL {
++				delete(c.m, k)
++			}
++		}
++		if len(c.m) >= molitCacheMax {
++			for k := range c.m {
++				delete(c.m, k)
++				break
++			}
++		}
++	}
++	c.m[key] = molitCacheEntry{items: items, at: now}
++}
++
++// recentMonths는 now가 속한 달을 포함해 최근 n개월을 YYYYMM 문자열로, 최신순으로 돌려준다.
++func recentMonths(now time.Time, n int) []string {
++	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
++	out := make([]string, 0, n)
++	for i := 0; i < n; i++ {
++		out = append(out, first.AddDate(0, -i, 0).Format("200601"))
++	}
++	return out
++}
++
++type umdPoint struct {
++	Name string  `json:"name"`
++	Lng  float64 `json:"lng"`
++	Lat  float64 `json:"lat"`
++}
++
++func (s *Server) appraisalSalesRecent(w http.ResponseWriter, r *http.Request) {
++	q := r.URL.Query()
++	lawd := q.Get("lawd_cd")
++	if len(lawd) != 5 || !allDigits(lawd) {
++		writeErr(w, http.StatusBadRequest, "lawd_cd(5) required")
++		return
++	}
++	n := salesRecentDefaultMonths
++	if v := q.Get("months"); v != "" {
++		m, err := strconv.Atoi(v)
++		if err != nil || m < 1 || m > salesRecentMaxMonths {
++			writeErr(w, http.StatusBadRequest, "months must be 1-6")
++			return
++		}
++		n = m
++	}
++	if s.MolitKey == "" {
++		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
++			"error": map[string]string{
++				"code":    "SALES_DISABLED",
++				"message": "실거래 조회가 현재 비활성 상태입니다",
++			},
++		})
++		return
++	}
++	// 실존 시군구만 상류(MOLIT)로 보낸다. 임의 코드로 상류 호출을 늘리거나 캐시를 밀어내는
++	// 것을 막는다(QA MED-2). 필지(화면이 시군구 코드를 얻는 곳) 또는 표준지 어느 쪽에든
++	// 있으면 통과시킨다. 두 테이블의 코드 체계 시점이 다를 수 있어서다(화성 일반구 신설,
++	// 광주·전남 통합 등 — QA NEW-2).
++	if s.Pool != nil {
++		ok, err := s.hasRegion(r.Context(), "parcels", lawd)
++		if err == nil && !ok {
++			ok, err = s.hasRegion(r.Context(), "standard_lots", lawd)
++		}
++		if err != nil {
++			writeErr(w, http.StatusInternalServerError, "query failed")
++			return
++		}
++		if !ok {
++			writeErr(w, http.StatusNotFound, "unknown lawd_cd")
++			return
++		}
++	}
++
++	months := recentMonths(time.Now().In(kst), n)
++	type monthResult struct {
++		items []molitItem
++		err   error
++	}
++	results := make([]monthResult, len(months))
++	var wg sync.WaitGroup
++	for i, ym := range months {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			items, err := s.molitMonth(r.Context(), lawd, ym)
++			results[i] = monthResult{items: items, err: err}
++		}()
++	}
++	wg.Wait()
++
++	items := []molitItem{}
++	failed := []string{}
++	truncated := []string{}
++	for i, res := range results {
++		if res.err != nil {
++			log.Printf("req %s: appraisal/sales/recent month %s failed: %s",
++				RequestID(r.Context()), months[i], redactKey(res.err, s.MolitKey))
++			failed = append(failed, months[i])
++			continue
++		}
++		if len(res.items) >= molitPageRows {
++			truncated = append(truncated, months[i])
++		}
++		items = append(items, res.items...)
++	}
++	if len(failed) == len(months) {
++		writeErr(w, http.StatusBadGateway, "upstream unavailable")
++		return
++	}
++
++	// 중심점은 보조 정보다. 실패해도 거래 목록은 돌려준다.
++	points, err := s.umdPoints(r.Context(), lawd)
++	if err != nil {
++		log.Printf("req %s: appraisal/sales/recent umd points failed: %v", RequestID(r.Context()), err)
++		points = []umdPoint{}
++	}
++
++	writeJSON(w, http.StatusOK, map[string]any{
++		"source":        "rt.molit.go.kr (RTMSDataSvcLandTrade)",
++		"lawd_cd":       lawd,
++		"months":        months,
++		"failed_months": failed,
++		// 한 달 거래가 molitPageRows건을 넘으면 첫 페이지만 담긴다. 숨기지 않고 알린다.
++		"truncated_months": truncated,
++		"total_count":      len(items),
++		"items":            items,
++		"umd_points":       points,
++	})
++}
++
++// molitMonth는 (시군구, 거래월) 한 달치 토지 실거래를 캐시 우선으로 가져온다.
++func (s *Server) molitMonth(ctx context.Context, lawd, ym string) ([]molitItem, error) {
++	key := lawd + ":" + ym
++	if items, ok := salesCache.get(key, time.Now()); ok {
++		return items, nil
++	}
++	u := fmt.Sprintf("https://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade?serviceKey=%s&LAWD_CD=%s&DEAL_YMD=%s&numOfRows=1000",
++		url.QueryEscape(s.MolitKey), lawd, ym)
++	body, err := s.fetch(ctx, u)
++	if err != nil {
++		return nil, err
++	}
++	var mr molitResp
++	if err := xml.Unmarshal(body, &mr); err != nil {
++		return nil, fmt.Errorf("molit xml: %w", err)
++	}
++	if mr.Header.ResultCode != "000" {
++		return nil, fmt.Errorf("molit resultCode=%q msg=%q", mr.Header.ResultCode, mr.Header.ResultMsg)
++	}
++	items := mr.Body.Items
++	if items == nil {
++		items = []molitItem{}
++	}
++	salesCache.put(key, items, time.Now())
++	return items, nil
++}
++
++// umdPoints는 시군구(5자리) 아래 법정동마다 대표점 하나를 돌려준다. 대표점은 그 법정동
++// 표준지 좌표의 평균이다(법정동 폴리곤 미적재). 같은 표준지가 여러 해 있으면 최신 해 하나만
++// 세어 특정 필지에 가중이 걸리지 않게 한다. standard_lots PK(pnu, base_year)의 pnu
++// 범위 조건으로 인덱스를 탄다(hasRegion과 같은 이유). 시군구 자체 행(xxxxx00000)은 표준지가
++// 없어 자연히 빠진다. 이름은 admin_areas 원문("시도 시군구 읍면동")이고, 프론트가 MOLIT
++// umdNm과 접미 일치로 맞춘다.
++func (s *Server) umdPoints(ctx context.Context, lawd string) ([]umdPoint, error) {
++	if s.Pool == nil {
++		return []umdPoint{}, nil
++	}
++	rows, err := s.Pool.Query(ctx,
++		`SELECT a.name, s.lng, s.lat
++		   FROM (SELECT substr(pnu, 1, 10) AS bcode,
++		                avg(ST_X(geom)) AS lng, avg(ST_Y(geom)) AS lat
++		           FROM (SELECT DISTINCT ON (pnu) pnu, geom
++		                   FROM standard_lots
++		                  WHERE pnu >= $1 AND pnu <= $2
++		                  ORDER BY pnu, base_year DESC) latest
++		          GROUP BY 1) s
++		   JOIN admin_areas a ON a.bcode = s.bcode
++		  ORDER BY s.bcode
++		  LIMIT $3`,
++		lawd+"00000000000000", lawd+"99999999999999", umdPointsLimit)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	out := []umdPoint{}
++	for rows.Next() {
++		var p umdPoint
++		if err := rows.Scan(&p.Name, &p.Lng, &p.Lat); err != nil {
++			return nil, err
++		}
++		out = append(out, p)
++	}
++	return out, rows.Err()
++}
+diff --git a/internal/api/sales_recent_test.go b/internal/api/sales_recent_test.go
+new file mode 100644
+index 0000000..9eb05ca
+--- /dev/null
++++ b/internal/api/sales_recent_test.go
+@@ -0,0 +1,192 @@
++package api
++
++import (
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strconv"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func TestRecentMonths(t *testing.T) {
++	now := time.Date(2026, 1, 31, 23, 0, 0, 0, kst)
++	got := recentMonths(now, 3)
++	want := []string{"202601", "202512", "202511"}
++	if strings.Join(got, ",") != strings.Join(want, ",") {
++		t.Fatalf("recentMonths = %v, want %v", got, want)
++	}
++	// 3월 31일에서 한 달 빼기가 3월 3일로 넘어가는 AddDate 함정 회피 확인.
++	got = recentMonths(time.Date(2026, 3, 31, 0, 0, 0, 0, kst), 2)
++	if strings.Join(got, ",") != "202603,202602" {
++		t.Fatalf("month-end rollover: %v", got)
++	}
++}
++
++func TestMolitCacheTTLAndCap(t *testing.T) {
++	c := &molitCache{m: map[string]molitCacheEntry{}}
++	t0 := time.Date(2026, 10, 24, 12, 0, 0, 0, kst)
++	c.put("11680:202610", []molitItem{{Jimok: "대"}}, t0)
++	if _, ok := c.get("11680:202610", t0.Add(molitCacheTTL-time.Minute)); !ok {
++		t.Fatal("entry should be fresh before TTL")
++	}
++	if _, ok := c.get("11680:202610", t0.Add(molitCacheTTL+time.Minute)); ok {
++		t.Fatal("entry should expire after TTL")
++	}
++	for i := 0; i < molitCacheMax+5; i++ {
++		c.put(strings.Repeat("k", i+1), nil, t0)
++	}
++	if len(c.m) > molitCacheMax {
++		t.Fatalf("cache grew past cap: %d", len(c.m))
++	}
++
++	// 가득 찼을 때 만료 항목부터 지우고, 살아 있는 항목은 통째로 날리지 않는다.
++	c = &molitCache{m: map[string]molitCacheEntry{}}
++	c.put("old", nil, t0)
++	t1 := t0.Add(molitCacheTTL + time.Minute)
++	for i := 0; i < molitCacheMax-1; i++ {
++		c.put(strings.Repeat("f", i+1), nil, t1)
++	}
++	c.put("new", nil, t1)
++	if _, ok := c.m["old"]; ok {
++		t.Fatal("expired entry should be evicted first")
++	}
++	if len(c.m) != molitCacheMax {
++		t.Fatalf("fresh entries should survive, len=%d want %d", len(c.m), molitCacheMax)
++	}
++}
++
++// stubTransport는 data.go.kr 대신 응답한다. failYM에 해당하는 달은 에러 XML을 준다.
++type stubTransport struct {
++	calls  atomic.Int32
++	failYM string
++	fullYM string // 이 달은 한 페이지(molitPageRows건)를 꽉 채워 준다
++}
++
++func (s *stubTransport) RoundTrip(r *http.Request) (*http.Response, error) {
++	s.calls.Add(1)
++	ym := r.URL.Query().Get("DEAL_YMD")
++	item := `<item><dealYear>` + ym[:4] + `</dealYear><dealMonth>` + ym[4:] + `</dealMonth>` +
++		`<dealDay>5</dealDay><dealAmount>45,000</dealAmount><dealArea>4</dealArea><jimok>도로</jimok>` +
++		`<umdNm>청담동</umdNm><jibun>1**</jibun></item>`
++	n := 1
++	if ym == s.fullYM {
++		n = molitPageRows
++	}
++	body := `<response><header><resultCode>000</resultCode><resultMsg>OK</resultMsg></header>` +
++		`<body><items>` + strings.Repeat(item, n) + `</items><totalCount>` + strconv.Itoa(n) + `</totalCount></body></response>`
++	if ym == s.failYM {
++		body = `<response><header><resultCode>30</resultCode><resultMsg>SERVICE KEY IS NOT REGISTERED</resultMsg></header></response>`
++	}
++	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)),
++		Header: http.Header{"Content-Type": []string{"application/xml"}}, Request: r}, nil
++}
++
++func newStubServer(st *stubTransport, key string) *Server {
++	return &Server{MolitKey: key, Client: &http.Client{Transport: st}}
++}
++
++func TestSalesRecentValidation(t *testing.T) {
++	s := newStubServer(&stubTransport{}, "k")
++	for _, q := range []string{"", "lawd_cd=1168", "lawd_cd=11a80", "lawd_cd=11680&months=0", "lawd_cd=11680&months=7", "lawd_cd=11680&months=x"} {
++		rec := httptest.NewRecorder()
++		s.appraisalSalesRecent(rec, httptest.NewRequest("GET", "/v1/appraisal/sales/recent?"+q, nil))
++		if rec.Code != http.StatusBadRequest {
++			t.Errorf("%q: code %d, want 400", q, rec.Code)
++		}
++	}
++}
++
++func TestSalesRecentNoKey(t *testing.T) {
++	s := newStubServer(&stubTransport{}, "")
++	rec := httptest.NewRecorder()
++	s.appraisalSalesRecent(rec, httptest.NewRequest("GET", "/v1/appraisal/sales/recent?lawd_cd=11680", nil))
++	if rec.Code != http.StatusServiceUnavailable {
++		t.Fatalf("code %d, want 503", rec.Code)
++	}
++}
++
++func TestSalesRecentAggregatesAndCaches(t *testing.T) {
++	salesCache = &molitCache{m: map[string]molitCacheEntry{}}
++	st := &stubTransport{}
++	s := newStubServer(st, "secret")
++	get := func() map[string]any {
++		rec := httptest.NewRecorder()
++		s.appraisalSalesRecent(rec, httptest.NewRequest("GET", "/v1/appraisal/sales/recent?lawd_cd=11680&months=3", nil))
++		if rec.Code != http.StatusOK {
++			t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
++		}
++		var out map[string]any
++		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
++			t.Fatal(err)
++		}
++		return out
++	}
++	out := get()
++	if n := out["total_count"].(float64); n != 3 {
++		t.Fatalf("total_count %v, want 3 (one per month)", n)
++	}
++	if len(out["months"].([]any)) != 3 || len(out["failed_months"].([]any)) != 0 {
++		t.Fatalf("months/failed_months: %v / %v", out["months"], out["failed_months"])
++	}
++	if pts := out["umd_points"].([]any); len(pts) != 0 {
++		t.Fatalf("nil pool should give empty umd_points, got %v", pts)
++	}
++	if st.calls.Load() != 3 {
++		t.Fatalf("upstream calls %d, want 3", st.calls.Load())
++	}
++	get() // 두 번째 호출은 전부 캐시
++	if st.calls.Load() != 3 {
++		t.Fatalf("second call should be cached, upstream calls now %d", st.calls.Load())
++	}
++}
++
++func TestSalesRecentPartialAndTotalFailure(t *testing.T) {
++	salesCache = &molitCache{m: map[string]molitCacheEntry{}}
++	months := recentMonths(time.Now().In(kst), 2)
++	st := &stubTransport{failYM: months[1]}
++	s := newStubServer(st, "secret")
++	rec := httptest.NewRecorder()
++	s.appraisalSalesRecent(rec, httptest.NewRequest("GET", "/v1/appraisal/sales/recent?lawd_cd=11680&months=2", nil))
++	if rec.Code != http.StatusOK {
++		t.Fatalf("partial failure should still be 200, got %d", rec.Code)
++	}
++	var out map[string]any
++	_ = json.Unmarshal(rec.Body.Bytes(), &out)
++	f := out["failed_months"].([]any)
++	if len(f) != 1 || f[0].(string) != months[1] {
++		t.Fatalf("failed_months %v, want [%s]", f, months[1])
++	}
++	if strings.Contains(rec.Body.String(), "secret") {
++		t.Fatal("response leaked the MOLIT key")
++	}
++
++	salesCache = &molitCache{m: map[string]molitCacheEntry{}}
++	one := recentMonths(time.Now().In(kst), 1)
++	s = newStubServer(&stubTransport{failYM: one[0]}, "secret")
++	rec = httptest.NewRecorder()
++	s.appraisalSalesRecent(rec, httptest.NewRequest("GET", "/v1/appraisal/sales/recent?lawd_cd=11680&months=1", nil))
++	if rec.Code != http.StatusBadGateway {
++		t.Fatalf("all months failed should be 502, got %d", rec.Code)
++	}
++}
++
++func TestSalesRecentFlagsTruncatedMonth(t *testing.T) {
++	salesCache = &molitCache{m: map[string]molitCacheEntry{}}
++	months := recentMonths(time.Now().In(kst), 2)
++	s := newStubServer(&stubTransport{fullYM: months[0]}, "secret")
++	rec := httptest.NewRecorder()
++	s.appraisalSalesRecent(rec, httptest.NewRequest("GET", "/v1/appraisal/sales/recent?lawd_cd=11680&months=2", nil))
++	if rec.Code != http.StatusOK {
++		t.Fatalf("code %d", rec.Code)
++	}
++	var out map[string]any
++	_ = json.Unmarshal(rec.Body.Bytes(), &out)
++	tr := out["truncated_months"].([]any)
++	if len(tr) != 1 || tr[0].(string) != months[0] {
++		t.Fatalf("truncated_months %v, want [%s]", tr, months[0])
++	}
++}
+diff --git a/internal/api/server.go b/internal/api/server.go
+index fcad90c..29d61cc 100644
+--- a/internal/api/server.go
++++ b/internal/api/server.go
+@@ -52,6 +52,7 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
+ 	mux.HandleFunc("GET /v1/parcel/by-jibun", s.parcelByJibun)
+ 	mux.HandleFunc("GET /v1/parcel/{pnu}", s.parcelByPNU)
+ 	mux.HandleFunc("GET /v1/appraisal/sales", s.appraisalSales)
++	mux.HandleFunc("GET /v1/appraisal/sales/recent", s.appraisalSalesRecent)
+ 	mux.HandleFunc("GET /v1/appraisal/price-index", s.appraisalPriceIndex)
+ 	mux.HandleFunc("GET /v1/appraisal/standard-lots", s.appraisalStandardLots)
+ 	mux.HandleFunc("GET /v1/appraisal/official-price", s.appraisalOfficialPrice)
+@@ -75,11 +76,15 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
+ 	// 프론트에 API 베이스와 데모 키를 런타임에 주입한다. 데모 키는 저장소가 아닌
+ 	// 환경변수(B2D_DEMO_API_KEY)에 두어 git에 시크릿이 남지 않게 한다. 이 키는
+ 	// 공개 데모용(좁은 scope + 낮은 rate limit)이라 노출을 전제로 운용한다.
++	// vworldKey는 V-World 영상 타일 키다. 타일 URL에 들어가므로 브라우저 노출이 전제이고,
++	// V-World 쪽 서비스 URL(도메인) 제한으로 보호한다. 비어 있으면 프론트가 항공사진
++	// 토글을 숨긴다.
+ 	root.HandleFunc("GET /config.json", func(w http.ResponseWriter, r *http.Request) {
+ 		writeJSON(w, http.StatusOK, map[string]any{
+ 			"apiBase":   "/v1",
+ 			"demoKey":   os.Getenv("B2D_DEMO_API_KEY"),
+ 			"selfServe": os.Getenv("B2D_SELF_SERVE_DEMO") == "true",
++			"vworldKey": os.Getenv("B2D_VWORLD_KEY"),
+ 		})
+ 	})
+ 	// 셀프 데모키 발급(선택 기능). 운영자가 B2D_SELF_SERVE_DEMO=true로 켤 때만
+diff --git a/internal/etl/ned/ned.go b/internal/etl/ned/ned.go
+new file mode 100644
+index 0000000..9f2f5e5
+--- /dev/null
++++ b/internal/etl/ned/ned.go
+@@ -0,0 +1,246 @@
++// Package ned는 브이월드 국가중점데이터 API(개별공시지가 getIndvdLandPriceAttr, 토지특성
++// getLandCharacteristics)를 법정동 단위로 받아 official_land_prices, land_features에 적재한다.
++//
++// 배경: 브이월드 파일 다운로드는 브라우저 로그인 세션으로만 내려와 자동화할 수 없다. 이 API는
++// pnu에 법정동 10자리를 주면 그 동의 필지 전체를 페이지 단위로 준다(2026-10-28 서버에서 확인).
++// 사용 범위(지시서 Phase 7 예외, 2026-10-28): 서버 배치 ETL로 스냅샷을 만드는 용도만. API 요청 경로에서는
++// 호출하지 않는다. 값은 원값 그대로 적재한다(재분류·보정 없음).
++package ned
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/url"
++	"strconv"
++	"strings"
++	"time"
++)
++
++// Dataset은 받을 자료 종류다.
++type Dataset string
++
++const (
++	Price    Dataset = "price"    // 개별공시지가
++	Features Dataset = "features" // 토지특성
++)
++
++const (
++	baseURL  = "https://api.vworld.kr/ned/data/"
++	pageRows = 1000
++	maxPages = 500 // 한 동에서 이보다 많은 페이지가 나오면 응답이 이상한 것으로 본다
++)
++
++// endpoint는 dataset별 API 이름과 응답 JSON의 최상위 키다(실제 응답에서 확인한 철자 그대로).
++func (d Dataset) endpoint() (api, root string, err error) {
++	switch d {
++	case Price:
++		return "getIndvdLandPriceAttr", "indvdLandPrices", nil
++	case Features:
++		return "getLandCharacteristics", "landCharacteristicss", nil
++	}
++	return "", "", fmt.Errorf("unknown dataset %q", d)
++}
++
++// Row는 적재 한 행이다. Price면 PricePerSqm만, Features면 네 라벨만 채운다.
++type Row struct {
++	PNU           string
++	BaseYear      int
++	PricePerSqm   int64
++	LandUse       string // 토지이용상황 (ladUseSittnNm)
++	TerrainHeight string // 지형높이 (tpgrphHgCodeNm)
++	TerrainShape  string // 지형형상 (tpgrphFrmCodeNm)
++	RoadSide      string // 도로접면 (roadSideCodeNm)
++	SourceVersion time.Time
++}
++
++// Client는 API 호출기다. Key는 로그·오류 메시지에 남기지 않는다.
++type Client struct {
++	Key    string
++	Domain string // 브이월드에 등록한 서비스 URL
++	HTTP   *http.Client
++	Base   string        // 테스트에서 바꾼다. 비면 baseURL
++	Pause  time.Duration // 호출 사이 간격(초당 호출 수 제한용)
++	Calls  int           // 지금까지 보낸 호출 수
++	// RetryWait는 재시도 대기 단위다(1회째 1배, 2회째 4배). 0이면 2초. 테스트에서 줄인다.
++	RetryWait time.Duration
++}
++
++// APIError는 재시도하지 않는 API 오류다(키·권한·한도 등). 이 오류가 나면 실행을 멈춘다.
++type APIError struct{ Msg string }
++
++func (e *APIError) Error() string { return "vworld api: " + e.Msg }
++
++func (c *Client) redact(s string) string {
++	if c.Key == "" {
++		return s
++	}
++	s = strings.ReplaceAll(s, c.Key, "***")
++	return strings.ReplaceAll(s, url.QueryEscape(c.Key), "***")
++}
++
++// page는 응답 JSON의 페이지 묶음이다. 숫자도 문자열로 온다.
++type page struct {
++	Field      []map[string]string `json:"field"`
++	TotalCount string              `json:"totalCount"`
++	ResultCode string              `json:"resultCode"`
++	ResultMsg  string              `json:"resultMsg"`
++}
++
++// FetchDong은 한 법정동(10자리)의 해당 연도 행을 모두 받는다. 페이지를 넘기며 totalCount만큼 모으고,
++// 빈 페이지가 오면 멈춘다.
++func (c *Client) FetchDong(ctx context.Context, d Dataset, bcode string, year int) ([]Row, int, error) {
++	api, root, err := d.endpoint()
++	if err != nil {
++		return nil, 0, err
++	}
++	var out []Row
++	total, got := -1, 0
++	for pageNo := 1; pageNo <= maxPages; pageNo++ {
++		p, err := c.getPage(ctx, api, root, bcode, year, pageNo)
++		if err != nil {
++			return nil, 0, err
++		}
++		if total < 0 {
++			total, _ = strconv.Atoi(strings.TrimSpace(p.TotalCount))
++		}
++		got += len(p.Field)
++		for _, f := range p.Field {
++			r, ok := toRow(d, f)
++			if ok {
++				out = append(out, r)
++			}
++		}
++		// 서버가 요청보다 작은 페이지를 줄 수도 있어, 받은 건수가 totalCount에 닿을 때까지 넘긴다.
++		if len(p.Field) == 0 || got >= total {
++			return out, total, nil
++		}
++	}
++	return nil, 0, &APIError{Msg: fmt.Sprintf("%s %s: more than %d pages", api, bcode, maxPages)}
++}
++
++func (c *Client) getPage(ctx context.Context, api, root, bcode string, year, pageNo int) (*page, error) {
++	q := url.Values{}
++	q.Set("key", c.Key)
++	q.Set("domain", c.Domain)
++	q.Set("pnu", bcode)
++	q.Set("stdrYear", strconv.Itoa(year))
++	q.Set("format", "json")
++	q.Set("numOfRows", strconv.Itoa(pageRows))
++	q.Set("pageNo", strconv.Itoa(pageNo))
++	base := c.Base
++	if base == "" {
++		base = baseURL
++	}
++	u := base + api + "?" + q.Encode()
++
++	var lastErr error
++	for attempt := 0; attempt < 3; attempt++ {
++		if attempt > 0 {
++			w := c.RetryWait
++			if w == 0 {
++				w = 2 * time.Second
++			}
++			time.Sleep(time.Duration(attempt*attempt) * w)
++		}
++		if c.Pause > 0 && c.Calls > 0 {
++			time.Sleep(c.Pause)
++		}
++		c.Calls++
++		body, status, err := c.get(ctx, u)
++		if err != nil || status >= 500 {
++			if err == nil {
++				err = fmt.Errorf("http %d", status)
++			}
++			lastErr = err
++			continue // 네트워크·서버 오류는 재시도
++		}
++		if status != http.StatusOK {
++			return nil, &APIError{Msg: fmt.Sprintf("%s http %d: %s", api, status, c.redact(snippet(body)))}
++		}
++		var env map[string]json.RawMessage
++		if err := json.Unmarshal(body, &env); err != nil {
++			return nil, &APIError{Msg: fmt.Sprintf("%s: not json: %s", api, c.redact(snippet(body)))}
++		}
++		raw, ok := env[root]
++		if !ok {
++			// 키 오류·권한 없음·한도 초과 등은 다른 모양의 JSON으로 온다. 원문 일부를 남기고 멈춘다.
++			return nil, &APIError{Msg: fmt.Sprintf("%s: unexpected response: %s", api, c.redact(snippet(body)))}
++		}
++		var p page
++		if err := json.Unmarshal(raw, &p); err != nil {
++			return nil, &APIError{Msg: fmt.Sprintf("%s: bad page: %v", api, err)}
++		}
++		if rc := strings.TrimSpace(p.ResultCode); rc != "" && rc != "INFO-000" {
++			return nil, &APIError{Msg: fmt.Sprintf("%s: resultCode=%s msg=%s", api, rc, p.ResultMsg)}
++		}
++		return &p, nil
++	}
++	return nil, fmt.Errorf("%s %s page %d: %s", api, bcode, pageNo, c.redact(lastErr.Error()))
++}
++
++func (c *Client) get(ctx context.Context, u string) ([]byte, int, error) {
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
++	if err != nil {
++		return nil, 0, err
++	}
++	hc := c.HTTP
++	if hc == nil {
++		hc = &http.Client{Timeout: 60 * time.Second}
++	}
++	res, err := hc.Do(req)
++	if err != nil {
++		// url.Error 안에 요청 주소(키 포함)가 들어 있어 원문을 그대로 쓰지 않는다.
++		var ue *url.Error
++		if errors.As(err, &ue) {
++			return nil, 0, fmt.Errorf("request failed: %v", ue.Err)
++		}
++		return nil, 0, errors.New("request failed")
++	}
++	defer res.Body.Close()
++	body, err := io.ReadAll(io.LimitReader(res.Body, 64<<20))
++	return body, res.StatusCode, err
++}
++
++func snippet(b []byte) string {
++	s := strings.TrimSpace(string(b))
++	if len(s) > 300 {
++		s = s[:300]
++	}
++	return s
++}
++
++// toRow는 응답 한 건을 적재 행으로 바꾼다. pnu·연도·(공시지가)가 이상한 행은 버린다.
++func toRow(d Dataset, f map[string]string) (Row, bool) {
++	r := Row{PNU: strings.TrimSpace(f["pnu"])}
++	if len(r.PNU) != 19 {
++		return r, false
++	}
++	y, err := strconv.Atoi(strings.TrimSpace(f["stdrYear"]))
++	if err != nil || y < 1990 || y > 2100 {
++		return r, false
++	}
++	r.BaseYear = y
++	if t, err := time.Parse("2006-01-02", strings.TrimSpace(f["lastUpdtDt"])); err == nil {
++		r.SourceVersion = t
++	} else {
++		r.SourceVersion = time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
++	}
++	switch d {
++	case Price:
++		v, err := strconv.ParseInt(strings.ReplaceAll(strings.TrimSpace(f["pblntfPclnd"]), ",", ""), 10, 64)
++		if err != nil || v <= 0 {
++			return r, false
++		}
++		r.PricePerSqm = v
++	case Features:
++		r.LandUse = strings.TrimSpace(f["ladUseSittnNm"])
++		r.TerrainHeight = strings.TrimSpace(f["tpgrphHgCodeNm"])
++		r.TerrainShape = strings.TrimSpace(f["tpgrphFrmCodeNm"])
++		r.RoadSide = strings.TrimSpace(f["roadSideCodeNm"])
++	}
++	return r, true
++}
+diff --git a/internal/etl/ned/ned_test.go b/internal/etl/ned/ned_test.go
+new file mode 100644
+index 0000000..c509c6a
+--- /dev/null
++++ b/internal/etl/ned/ned_test.go
+@@ -0,0 +1,122 @@
++package ned
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++)
++
++// 2026-10-28 운영 서버에서 받은 실제 응답 모양(필드 일부)을 그대로 쓴다.
++const pricePage = `{"indvdLandPrices" : {"field" : [%s], "pageNo" : "%s", "resultCode" : "", "totalCount" : "%d", "numOfRows" : "1000", "resultMsg" : ""}}`
++const priceField = `{"mnnmSlno" : "1", "pblntfDe" : "2026-04-30", "stdLandAt" : "N", "stdrYear" : "2026", "pnu" : "%s", "lastUpdtDt" : "2026-05-21", "ldCode" : "4145010600", "pblntfPclnd" : "%s", "regstrSeCode" : "1"}`
++const featField = `{"tpgrphHgCodeNm" : "평지", "stdrYear" : "2026", "roadSideCodeNm" : "세로한면(가)", "ladUseSittnNm" : "주거용", "tpgrphFrmCodeNm" : "가로장방형", "lastUpdtDt" : "2026-05-12", "pnu" : "4145010600100010000"}`
++
++func TestFetchDongPagesUntilTotal(t *testing.T) {
++	// 서버가 요청(1000)보다 작은 페이지(2건)를 줘도 totalCount(3)까지 넘겨 받는지 본다.
++	var calls int
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		q := r.URL.Query()
++		if q.Get("pnu") != "4145010600" || q.Get("stdrYear") != "2026" || q.Get("domain") == "" || q.Get("key") != "SECRET" {
++			t.Errorf("bad query: %v", q)
++		}
++		var fields []string
++		switch q.Get("pageNo") {
++		case "1":
++			fields = []string{fmt.Sprintf(priceField, "4145010600100010000", "121800"), fmt.Sprintf(priceField, "4145010600100020000", "1,234,000")}
++		case "2":
++			fields = []string{fmt.Sprintf(priceField, "41450106001000X", "5")} // pnu 길이 오류 -> 버림
++		}
++		fmt.Fprintf(w, pricePage, strings.Join(fields, ","), q.Get("pageNo"), 3)
++	}))
++	defer srv.Close()
++	c := &Client{Key: "SECRET", Domain: "https://example.test", Base: srv.URL + "/"}
++	rows, total, err := c.FetchDong(context.Background(), Price, "4145010600", 2026)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if total != 3 || calls != 2 || len(rows) != 2 {
++		t.Fatalf("total=%d calls=%d rows=%d, want 3/2/2", total, calls, len(rows))
++	}
++	if rows[1].PricePerSqm != 1234000 || rows[0].BaseYear != 2026 || rows[0].SourceVersion.Format("2006-01-02") != "2026-05-21" {
++		t.Fatalf("row parse: %+v", rows)
++	}
++}
++
++func TestFeaturesRowMapping(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if !strings.HasSuffix(r.URL.Path, "/getLandCharacteristics") {
++			t.Errorf("path %s", r.URL.Path)
++		}
++		fmt.Fprintf(w, `{"landCharacteristicss" : {"field" : [%s], "pageNo" : "1", "resultCode" : "", "totalCount" : "1", "numOfRows" : "1000", "resultMsg" : ""}}`, featField)
++	}))
++	defer srv.Close()
++	c := &Client{Key: "k", Domain: "d", Base: srv.URL + "/"}
++	rows, _, err := c.FetchDong(context.Background(), Features, "4145010600", 2026)
++	if err != nil || len(rows) != 1 {
++		t.Fatalf("rows=%v err=%v", rows, err)
++	}
++	r := rows[0]
++	if r.LandUse != "주거용" || r.TerrainHeight != "평지" || r.TerrainShape != "가로장방형" || r.RoadSide != "세로한면(가)" {
++		t.Fatalf("labels: %+v", r)
++	}
++}
++
++func TestEmptyDongAndAPIErrorStops(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Query().Get("pnu") == "1111111111" {
++			fmt.Fprintf(w, pricePage, "", "1", 0)
++			return
++		}
++		// 키 오류 등은 다른 모양의 JSON으로 온다고 가정. 원문에 키가 섞여도 오류 메시지엔 남지 않아야 한다.
++		fmt.Fprint(w, `{"response":{"status":"ERROR","error":{"code":"INCORRECT_KEY","text":"key SECRET is invalid"}}}`)
++	}))
++	defer srv.Close()
++	c := &Client{Key: "SECRET", Domain: "d", Base: srv.URL + "/"}
++	rows, total, err := c.FetchDong(context.Background(), Price, "1111111111", 2026)
++	if err != nil || total != 0 || len(rows) != 0 {
++		t.Fatalf("empty dong: rows=%v total=%d err=%v", rows, total, err)
++	}
++	_, _, err = c.FetchDong(context.Background(), Price, "2222222222", 2026)
++	var ae *APIError
++	if !errors.As(err, &ae) {
++		t.Fatalf("want APIError, got %v", err)
++	}
++	if strings.Contains(err.Error(), "SECRET") {
++		t.Fatalf("key leaked: %v", err)
++	}
++}
++
++func TestServerErrorRetriesThenFailsWithoutKey(t *testing.T) {
++	var calls int
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		w.WriteHeader(http.StatusBadGateway)
++	}))
++	defer srv.Close()
++	c := &Client{Key: "SECRET", Domain: "d", Base: srv.URL + "/", RetryWait: time.Millisecond}
++	_, _, err := c.FetchDong(context.Background(), Price, "4145010600", 2026)
++	if err == nil || calls != 3 {
++		t.Fatalf("want 3 attempts and error, got calls=%d err=%v", calls, err)
++	}
++	var ae *APIError
++	if errors.As(err, &ae) {
++		t.Fatalf("5xx should be retryable error, not APIError: %v", err)
++	}
++	if strings.Contains(err.Error(), "SECRET") {
++		t.Fatalf("key leaked: %v", err)
++	}
++}
++
++func TestDedupeKeepsLast(t *testing.T) {
++	in := []Row{{PNU: "a", BaseYear: 2026, PricePerSqm: 1}, {PNU: "b", BaseYear: 2026}, {PNU: "a", BaseYear: 2026, PricePerSqm: 2}}
++	out := dedupe(in)
++	if len(out) != 2 || out[0].PricePerSqm != 2 {
++		t.Fatalf("dedupe: %+v", out)
++	}
++}
+diff --git a/internal/etl/ned/schedule.go b/internal/etl/ned/schedule.go
+new file mode 100644
+index 0000000..5785c8d
+--- /dev/null
++++ b/internal/etl/ned/schedule.go
+@@ -0,0 +1,36 @@
++package ned
++
++import (
++	"fmt"
++	"time"
++)
++
++// KST는 일정 계산 기준 시간대다. distroless 이미지엔 tzdata가 없어 고정 오프셋을 쓴다(서머타임 없음).
++var KST = time.FixedZone("KST", 9*60*60)
++
++// AutoYear는 받을 기준연도다. 개별공시지가는 매년 5월 말 공시되므로 6월부터는 올해, 그 전에는 작년.
++func AutoYear(now time.Time) int {
++	k := now.In(KST)
++	if k.Month() < time.June {
++		return k.Year() - 1
++	}
++	return k.Year()
++}
++
++// ParseClock는 "03:17" 같은 KST 시각을 시·분으로 바꾼다.
++func ParseClock(s string) (hh, mm int, err error) {
++	if _, err = fmt.Sscanf(s, "%d:%d", &hh, &mm); err != nil || hh < 0 || hh > 23 || mm < 0 || mm > 59 {
++		return 0, 0, fmt.Errorf("time must be HH:MM (KST): %q", s)
++	}
++	return hh, mm, nil
++}
++
++// NextRun은 now 이후 처음 오는 KST hh:mm이다. 지금이 정확히 그 시각이면 다음 날로 넘긴다.
++func NextRun(now time.Time, hh, mm int) time.Time {
++	k := now.In(KST)
++	t := time.Date(k.Year(), k.Month(), k.Day(), hh, mm, 0, 0, KST)
++	if !t.After(k) {
++		t = t.AddDate(0, 0, 1)
++	}
++	return t
++}
+diff --git a/internal/etl/ned/schedule_test.go b/internal/etl/ned/schedule_test.go
+new file mode 100644
+index 0000000..1432b33
+--- /dev/null
++++ b/internal/etl/ned/schedule_test.go
+@@ -0,0 +1,49 @@
++package ned
++
++import (
++	"testing"
++	"time"
++)
++
++func TestAutoYear(t *testing.T) {
++	cases := map[string]int{
++		"2026-05-31T23:59:00+09:00": 2025, // 5월까지는 작년
++		"2026-06-01T00:00:00+09:00": 2026, // 6월부터 올해
++		"2026-05-31T15:30:00Z":      2026, // UTC 5/31 15:30 = KST 6/1 00:30
++		"2027-01-15T10:00:00+09:00": 2026,
++	}
++	for in, want := range cases {
++		now, _ := time.Parse(time.RFC3339, in)
++		if got := AutoYear(now); got != want {
++			t.Errorf("AutoYear(%s) = %d, want %d", in, got, want)
++		}
++	}
++}
++
++func TestNextRun(t *testing.T) {
++	cases := []struct{ now, want string }{
++		{"2026-10-28T02:00:00+09:00", "2026-10-28T03:17:00+09:00"}, // 오늘 03:17 전
++		{"2026-10-28T03:17:00+09:00", "2026-10-29T03:17:00+09:00"}, // 정각이면 다음 날
++		{"2026-10-28T12:00:00+09:00", "2026-10-29T03:17:00+09:00"},
++		{"2026-12-31T20:00:00Z", "2027-01-02T03:17:00+09:00"}, // UTC 12/31 20:00 = KST 1/1 05:00
++		{"2026-10-27T18:00:00Z", "2026-10-28T03:17:00+09:00"}, // UTC 18:00 = KST 03:00
++	}
++	for _, c := range cases {
++		now, _ := time.Parse(time.RFC3339, c.now)
++		want, _ := time.Parse(time.RFC3339, c.want)
++		if got := NextRun(now, 3, 17); !got.Equal(want) {
++			t.Errorf("NextRun(%s) = %s, want %s", c.now, got, want)
++		}
++	}
++}
++
++func TestParseClock(t *testing.T) {
++	if h, m, err := ParseClock("03:17"); err != nil || h != 3 || m != 17 {
++		t.Fatalf("03:17 -> %d %d %v", h, m, err)
++	}
++	for _, bad := range []string{"", "24:00", "3", "03:60", "ab:cd"} {
++		if _, _, err := ParseClock(bad); err == nil {
++			t.Errorf("%q should fail", bad)
++		}
++	}
++}
+diff --git a/internal/etl/ned/sync.go b/internal/etl/ned/sync.go
+new file mode 100644
+index 0000000..0b3a7c4
+--- /dev/null
++++ b/internal/etl/ned/sync.go
+@@ -0,0 +1,245 @@
++package ned
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"io"
++	"time"
++
++	"github.com/jackc/pgx/v5/pgxpool"
++)
++
++// Options는 한 번 실행의 범위다.
++type Options struct {
++	Datasets []Dataset
++	Year     int
++	Sido     []string  // 시도 2자리 코드. 비면 전국
++	MaxCalls int       // 이만큼 호출하면 멈춘다(일일 한도 보호). 0이면 제한 없음
++	Compare  bool      // true면 적재하지 않고 DB와 대조만 한다(검증용, 진행 기록도 안 남김)
++	MaxDongs int       // 0이면 제한 없음. 검증·시범용
++	Log      io.Writer // 진행 로그
++}
++
++// Stats는 실행 결과 요약이다.
++type Stats struct {
++	Dongs, Rows, Calls int
++	Stopped            string // 멈춘 이유(한도·API 오류). 끝까지 갔으면 빈 문자열
++	Cmp                CompareStats
++}
++
++// CompareStats는 Compare 모드에서 API 값과 DB 값을 필지별로 맞춰 본 결과다.
++type CompareStats struct {
++	APIRows, InDB, Same, Diff int
++	Examples                  []string
++}
++
++// Run은 법정동 목록을 돌며 받고 적재한다. 끝낸 동은 진행 기록에 남겨 다음 실행에서 건너뛴다.
++func Run(ctx context.Context, pool *pgxpool.Pool, c *Client, o Options) (Stats, error) {
++	var st Stats
++	for _, d := range o.Datasets {
++		dongs, err := pendingDongs(ctx, pool, d, o)
++		if err != nil {
++			return st, err
++		}
++		fmt.Fprintf(o.Log, "ned-sync %s %d: %d dongs to do\n", d, o.Year, len(dongs))
++		for i, bcode := range dongs {
++			if o.MaxCalls > 0 && c.Calls >= o.MaxCalls {
++				st.Stopped = fmt.Sprintf("max-calls %d reached", o.MaxCalls)
++				st.Calls = c.Calls
++				return st, nil
++			}
++			rows, total, err := c.FetchDong(ctx, d, bcode, o.Year)
++			if err != nil {
++				var ae *APIError
++				if errors.As(err, &ae) {
++					st.Stopped = ae.Error() // 키·권한·한도 문제는 다음 날 이어서
++					st.Calls = c.Calls
++					return st, nil
++				}
++				return st, fmt.Errorf("%s %s: %w", d, bcode, err)
++			}
++			if o.Compare {
++				if err := compare(ctx, pool, d, rows, &st.Cmp); err != nil {
++					return st, err
++				}
++			} else {
++				if err := upsert(ctx, pool, d, rows); err != nil {
++					return st, fmt.Errorf("%s %s upsert: %w", d, bcode, err)
++				}
++				if _, err := pool.Exec(ctx, `
++					INSERT INTO ned_sync_progress (dataset, base_year, bcode, rows) VALUES ($1,$2,$3,$4)
++					ON CONFLICT (dataset, base_year, bcode) DO UPDATE SET rows = EXCLUDED.rows, synced_at = now()`,
++					string(d), o.Year, bcode, len(rows)); err != nil {
++					return st, err
++				}
++			}
++			st.Dongs++
++			st.Rows += len(rows)
++			if (i+1)%100 == 0 || i == len(dongs)-1 {
++				fmt.Fprintf(o.Log, "  %s %d/%d dongs, rows %d, calls %d (last %s total %d)\n",
++					d, i+1, len(dongs), st.Rows, c.Calls, bcode, total)
++			}
++		}
++	}
++	st.Calls = c.Calls
++	return st, nil
++}
++
++// pendingDongs는 필지가 실제로 있는 법정동 중 이번 연도에 아직 안 끝낸 동을 돌려준다.
++// parcels(bcode, jibun) 인덱스의 범위 조건으로 시도별로 뽑는다.
++func pendingDongs(ctx context.Context, pool *pgxpool.Pool, d Dataset, o Options) ([]string, error) {
++	sidos := o.Sido
++	if len(sidos) == 0 {
++		sidos = []string{""}
++	}
++	var out []string
++	for _, sd := range sidos {
++		lo := (sd + "0000000000")[:10]
++		hi := (sd + "9999999999")[:10]
++		q := `SELECT DISTINCT p.bcode FROM parcels p
++		      WHERE p.bcode >= $1 AND p.bcode <= $2`
++		args := []any{lo, hi}
++		if !o.Compare {
++			q += ` AND NOT EXISTS (SELECT 1 FROM ned_sync_progress s
++			        WHERE s.dataset = $3 AND s.base_year = $4 AND s.bcode = p.bcode)`
++			args = append(args, string(d), o.Year)
++		}
++		q += ` ORDER BY 1`
++		rows, err := pool.Query(ctx, q, args...)
++		if err != nil {
++			return nil, err
++		}
++		for rows.Next() {
++			var b string
++			if err := rows.Scan(&b); err != nil {
++				rows.Close()
++				return nil, err
++			}
++			out = append(out, b)
++			if o.MaxDongs > 0 && len(out) >= o.MaxDongs {
++				break
++			}
++		}
++		rows.Close()
++		if err := rows.Err(); err != nil {
++			return nil, err
++		}
++		if o.MaxDongs > 0 && len(out) >= o.MaxDongs {
++			break
++		}
++	}
++	return out, nil
++}
++
++// upsert는 한 동의 행을 한 문장으로 넣는다. 같은 (pnu, 연도)가 두 번 오면 뒤의 것을 쓴다.
++func upsert(ctx context.Context, pool *pgxpool.Pool, d Dataset, rows []Row) error {
++	rows = dedupe(rows)
++	if len(rows) == 0 {
++		return nil
++	}
++	pnus := make([]string, len(rows))
++	years := make([]int16, len(rows))
++	vers := make([]time.Time, len(rows))
++	for i, r := range rows {
++		pnus[i], years[i], vers[i] = r.PNU, int16(r.BaseYear), r.SourceVersion
++	}
++	switch d {
++	case Price:
++		prices := make([]int64, len(rows))
++		for i, r := range rows {
++			prices[i] = r.PricePerSqm
++		}
++		_, err := pool.Exec(ctx, `
++			INSERT INTO official_land_prices (pnu, base_year, price_per_sqm, source, source_version)
++			SELECT u.pnu, u.y, u.p, 'vworld_ned', u.v
++			  FROM unnest($1::char(19)[], $2::smallint[], $3::bigint[], $4::date[]) AS u(pnu, y, p, v)
++			ON CONFLICT (pnu, base_year) DO UPDATE
++			   SET price_per_sqm = EXCLUDED.price_per_sqm, source = EXCLUDED.source,
++			       source_version = EXCLUDED.source_version`,
++			pnus, years, prices, vers)
++		return err
++	case Features:
++		lu := make([]string, len(rows))
++		th := make([]string, len(rows))
++		ts := make([]string, len(rows))
++		rs := make([]string, len(rows))
++		for i, r := range rows {
++			lu[i], th[i], ts[i], rs[i] = r.LandUse, r.TerrainHeight, r.TerrainShape, r.RoadSide
++		}
++		_, err := pool.Exec(ctx, `
++			INSERT INTO land_features (pnu, base_year, land_use, terrain_height, terrain_shape, road_side, source, source_version)
++			SELECT u.pnu, u.y, u.lu, u.th, u.ts, u.rs, 'vworld_ned', u.v
++			  FROM unnest($1::char(19)[], $2::smallint[], $3::text[], $4::text[], $5::text[], $6::text[], $7::date[])
++			       AS u(pnu, y, lu, th, ts, rs, v)
++			ON CONFLICT (pnu, base_year) DO UPDATE
++			   SET land_use = EXCLUDED.land_use, terrain_height = EXCLUDED.terrain_height,
++			       terrain_shape = EXCLUDED.terrain_shape, road_side = EXCLUDED.road_side,
++			       source = EXCLUDED.source, source_version = EXCLUDED.source_version`,
++			pnus, years, lu, th, ts, rs, vers)
++		return err
++	}
++	return fmt.Errorf("unknown dataset %q", d)
++}
++
++func dedupe(rows []Row) []Row {
++	idx := make(map[string]int, len(rows))
++	out := rows[:0:0]
++	for _, r := range rows {
++		k := r.PNU + fmt.Sprint(r.BaseYear)
++		if i, ok := idx[k]; ok {
++			out[i] = r
++			continue
++		}
++		idx[k] = len(out)
++		out = append(out, r)
++	}
++	return out
++}
++
++// compare는 API 행과 DB에 이미 있는 행(파일 적재분)을 필지별로 대조한다. 쓰지 않는다.
++func compare(ctx context.Context, pool *pgxpool.Pool, d Dataset, rows []Row, cs *CompareStats) error {
++	rows = dedupe(rows)
++	cs.APIRows += len(rows)
++	for _, r := range rows {
++		var same bool
++		var dbv string
++		var err error
++		switch d {
++		case Price:
++			var v int64
++			err = pool.QueryRow(ctx, `SELECT price_per_sqm FROM official_land_prices WHERE pnu=$1 AND base_year=$2`,
++				r.PNU, r.BaseYear).Scan(&v)
++			same, dbv = v == r.PricePerSqm, fmt.Sprint(v)
++		case Features:
++			var lu, th, ts, rs *string
++			err = pool.QueryRow(ctx, `SELECT land_use, terrain_height, terrain_shape, road_side FROM land_features WHERE pnu=$1 AND base_year=$2`,
++				r.PNU, r.BaseYear).Scan(&lu, &th, &ts, &rs)
++			s := func(p *string) string {
++				if p == nil {
++					return ""
++				}
++				return *p
++			}
++			same = s(lu) == r.LandUse && s(th) == r.TerrainHeight && s(ts) == r.TerrainShape && s(rs) == r.RoadSide
++			dbv = fmt.Sprintf("%s|%s|%s|%s", s(lu), s(th), s(ts), s(rs))
++		}
++		if err != nil {
++			continue // DB에 없는 필지(파일엔 없고 API엔 있는 경우)는 InDB에 세지 않는다
++		}
++		cs.InDB++
++		if same {
++			cs.Same++
++			continue
++		}
++		cs.Diff++
++		if len(cs.Examples) < 8 {
++			api := fmt.Sprint(r.PricePerSqm)
++			if d == Features {
++				api = fmt.Sprintf("%s|%s|%s|%s", r.LandUse, r.TerrainHeight, r.TerrainShape, r.RoadSide)
++			}
++			cs.Examples = append(cs.Examples, fmt.Sprintf("%s %s %d: db=%s api=%s", d, r.PNU, r.BaseYear, dbv, api))
++		}
++	}
++	return nil
++}
+diff --git a/internal/etl/ned/sync_pg_test.go b/internal/etl/ned/sync_pg_test.go
+new file mode 100644
+index 0000000..e71c877
+--- /dev/null
++++ b/internal/etl/ned/sync_pg_test.go
+@@ -0,0 +1,100 @@
++package ned
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++
++	"github.com/jackc/pgx/v5/pgxpool"
++)
++
++// TestRunAgainstPostgres는 실제 PostGIS(마이그레이션 적용된 빈 DB)에서 적재·이어받기·대조·호출 한도를 본다.
++// B2D_TEST_DATABASE_URL이 없으면 건너뛴다(운영 DB에 절대 쓰지 말 것: 아래에서 테이블을 비운다).
++func TestRunAgainstPostgres(t *testing.T) {
++	dsn := os.Getenv("B2D_TEST_DATABASE_URL")
++	if dsn == "" {
++		t.Skip("B2D_TEST_DATABASE_URL not set")
++	}
++	ctx := context.Background()
++	pool, err := pgxpool.New(ctx, dsn)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer pool.Close()
++	for _, q := range []string{
++		`TRUNCATE parcels, official_land_prices, land_features, ned_sync_progress`,
++		// 세종(36) 두 동과 다른 시도(11) 한 동
++		`INSERT INTO parcels (pnu, bcode, jibun, source, source_version) VALUES
++		   ('3611010100100010000','3611010100','1','t','2026-01-01'),
++		   ('3611010100100020000','3611010100','2','t','2026-01-01'),
++		   ('3611010200100010000','3611010200','1','t','2026-01-01'),
++		   ('1111010100100010000','1111010100','1','t','2026-01-01')`,
++	} {
++		if _, err := pool.Exec(ctx, q); err != nil {
++			t.Fatal(err)
++		}
++	}
++	var calls int
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		b := r.URL.Query().Get("pnu")
++		if strings.HasSuffix(r.URL.Path, "getLandCharacteristics") {
++			fmt.Fprintf(w, `{"landCharacteristicss":{"field":[{"pnu":"%s100010000","stdrYear":"2026","lastUpdtDt":"2026-05-12","ladUseSittnNm":"주거용","tpgrphHgCodeNm":"평지","tpgrphFrmCodeNm":"정방형","roadSideCodeNm":"세로한면(가)"}],"totalCount":"1","resultCode":""}}`, b)
++			return
++		}
++		fmt.Fprintf(w, `{"indvdLandPrices":{"field":[{"pnu":"%s100010000","stdrYear":"2026","lastUpdtDt":"2026-05-21","pblntfPclnd":"500000"},{"pnu":"%s100020000","stdrYear":"2026","lastUpdtDt":"2026-05-21","pblntfPclnd":"600000"}],"totalCount":"2","resultCode":""}}`, b, b)
++	}))
++	defer srv.Close()
++	newClient := func() *Client { return &Client{Key: "k", Domain: "d", Base: srv.URL + "/"} }
++	var log bytes.Buffer
++	o := Options{Datasets: []Dataset{Price, Features}, Year: 2026, Sido: []string{"36"}, Log: &log}
++
++	// 1) 호출 한도: 1회 호출 후 멈추고, 그 동만 기록된다.
++	lim := o
++	lim.MaxCalls = 1
++	st, err := Run(ctx, pool, newClient(), lim)
++	if err != nil || st.Stopped == "" || st.Dongs != 1 {
++		t.Fatalf("max-calls run: %+v err=%v", st, err)
++	}
++	// 2) 이어받기: 남은 것만 받는다(가격 1동 + 특성 2동 = 3호출).
++	calls = 0
++	st, err = Run(ctx, pool, newClient(), o)
++	if err != nil || st.Stopped != "" || calls != 3 {
++		t.Fatalf("resume run: %+v calls=%d err=%v log=%s", st, calls, err, log.String())
++	}
++	var nPrice, nFeat, nProg int
++	pool.QueryRow(ctx, `SELECT count(*) FROM official_land_prices WHERE base_year=2026 AND source='vworld_ned'`).Scan(&nPrice)
++	pool.QueryRow(ctx, `SELECT count(*) FROM land_features WHERE base_year=2026 AND road_side='세로한면(가)'`).Scan(&nFeat)
++	pool.QueryRow(ctx, `SELECT count(*) FROM ned_sync_progress`).Scan(&nProg)
++	if nPrice != 4 || nFeat != 2 || nProg != 4 {
++		t.Fatalf("rows price=%d feat=%d progress=%d, want 4/2/4", nPrice, nFeat, nProg)
++	}
++	var p int64
++	pool.QueryRow(ctx, `SELECT price_per_sqm FROM official_land_prices WHERE pnu='3611010200100020000' AND base_year=2026`).Scan(&p)
++	if p != 600000 {
++		t.Fatalf("price %d", p)
++	}
++	// 3) 다시 돌리면 할 일이 없다.
++	calls = 0
++	if st, err = Run(ctx, pool, newClient(), o); err != nil || calls != 0 || st.Dongs != 0 {
++		t.Fatalf("idempotent run: %+v calls=%d err=%v", st, calls, err)
++	}
++	// 4) 대조 모드: 쓰지 않고 같은 값이면 same으로 센다. 한 필지 값을 바꿔 diff 1을 만든다.
++	pool.Exec(ctx, `UPDATE official_land_prices SET price_per_sqm=1 WHERE pnu='3611010100100010000' AND base_year=2026`)
++	cmp := o
++	cmp.Compare = true
++	cmp.Datasets = []Dataset{Price}
++	st, err = Run(ctx, pool, newClient(), cmp)
++	if err != nil || st.Cmp.InDB != 4 || st.Cmp.Same != 3 || st.Cmp.Diff != 1 || len(st.Cmp.Examples) != 1 {
++		t.Fatalf("compare: %+v err=%v", st.Cmp, err)
++	}
++	pool.QueryRow(ctx, `SELECT price_per_sqm FROM official_land_prices WHERE pnu='3611010100100010000' AND base_year=2026`).Scan(&p)
++	if p != 1 {
++		t.Fatalf("compare mode must not write, price now %d", p)
++	}
++}
+diff --git a/internal/etl/priceindex/load.go b/internal/etl/priceindex/load.go
+index 8c5454f..7d45891 100644
+--- a/internal/etl/priceindex/load.go
++++ b/internal/etl/priceindex/load.go
+@@ -102,6 +102,10 @@ func Load(ctx context.Context, pool *pgxpool.Pool, jsonPath string) (*Stats, err
+ 			stats.Skipped++ // 집계/레거시 시도
+ 			continue
+ 		}
++		var code string
++		if full == SejongName {
++			code = SejongCode // 시군구 단계가 없어 크로스워크로는 못 찾는다
++		}
+ 		si, gu := strings.TrimSpace(row["2"]), strings.TrimSpace(row["3"])
+ 		if strings.HasPrefix(si, "(구)") || strings.HasPrefix(gu, "(구)") {
+ 			stats.Skipped++
+@@ -111,10 +115,12 @@ func Load(ctx context.Context, pool *pgxpool.Pool, jsonPath string) (*Stats, err
+ 		if gu != "" && gu != si {
+ 			name += " " + gu // 시 + 자치구
+ 		}
+-		code, ok := xwalk[name]
+-		if !ok {
+-			stats.Skipped++
+-			continue
++		if code == "" {
++			code, ok = xwalk[name]
++			if !ok {
++				stats.Skipped++
++				continue
++			}
+ 		}
+ 		useZone := strings.TrimSpace(row["4"])
+ 		if useZone == "" {
+@@ -164,9 +170,26 @@ func parseMonth(s string) string {
+ 	return fmt.Sprintf("%04d%02d", yi, mi)
+ }
+ 
++// 세종특별자치시는 시군구 단계가 없어(법정동 이름이 "세종특별자치시 한솔동") "시도 시군구" 크로스워크에
++// 잡히지 않는다. 그래서 세종 행이 전부 스킵되어 지가변동률이 0건이었다(2026-10-28 확인). 시군구 코드를 직접 준다.
++const (
++	SejongName = "세종특별자치시"
++	SejongCode = "36110"
++)
++
++// SidoFull은 R-ONE 시도 약칭을 admin_areas 정식명으로 바꾼다. 없으면 "".
++func SidoFull(short string) string { return sidoFull[strings.TrimSpace(short)] }
++
++// Crosswalk는 "시도 시군구 [자치구]" 이름 -> 시군구 5자리 코드 맵이다(다른 적재기와 공유).
++func Crosswalk(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
++	return buildCrosswalk(ctx, pool)
++}
++
+ // buildCrosswalk은 admin_areas(법정동, name="시도 시군구 [자치구] 읍면동")에서
+ // "시도 시군구"와 "시도 시 자치구" 앞토큰 조합 → 5자리 시군구코드 맵을 만든다.
+ // 파일은 평시군구면 "시도 시군구", 자치구면 "시도 시 자치구"로 질의하므로 둘 다 등록한다.
++// 구가 있는 시("경기도 수원시")처럼 한 이름이 여러 코드에 걸리면 그 이름은 뺀다. 그 행은 시 전체 집계라
++// 어느 한 구의 코드에 넣으면 그 구의 값을 덮어쓴다(이전에는 마지막에 읽힌 구 코드로 들어갔다).
+ func buildCrosswalk(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
+ 	rows, err := pool.Query(ctx,
+ 		`SELECT DISTINCT substr(bcode,1,5), split_part(name,' ',1), split_part(name,' ',2), split_part(name,' ',3)
+@@ -176,6 +199,13 @@ func buildCrosswalk(ctx context.Context, pool *pgxpool.Pool) (map[string]string,
+ 	}
+ 	defer rows.Close()
+ 	m := map[string]string{}
++	ambiguous := map[string]bool{}
++	put := func(k, code string) {
++		if old, ok := m[k]; ok && old != code {
++			ambiguous[k] = true
++		}
++		m[k] = code
++	}
+ 	for rows.Next() {
+ 		var code, t1, t2, t3 string
+ 		if err := rows.Scan(&code, &t1, &t2, &t3); err != nil {
+@@ -184,10 +214,13 @@ func buildCrosswalk(ctx context.Context, pool *pgxpool.Pool) (map[string]string,
+ 		if t1 == "" || t2 == "" {
+ 			continue
+ 		}
+-		m[t1+" "+t2] = code
++		put(t1+" "+t2, code)
+ 		if t3 != "" {
+-			m[t1+" "+t2+" "+t3] = code
++			put(t1+" "+t2+" "+t3, code)
+ 		}
+ 	}
++	for k := range ambiguous {
++		delete(m, k)
++	}
+ 	return m, rows.Err()
+ }
+diff --git a/internal/etl/rone/region.go b/internal/etl/rone/region.go
+new file mode 100644
+index 0000000..af8a398
+--- /dev/null
++++ b/internal/etl/rone/region.go
+@@ -0,0 +1,67 @@
++package rone
++
++import (
++	"strings"
++
++	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
++)
++
++// place는 GRP_FULLNM 하나를 해석한 결과다. Code가 있으면 그대로 쓰고, 없으면 Name을 크로스워크에서 찾는다.
++type place struct {
++	Name      string // "부산광역시 중구", "경기도 수원시 장안구"
++	Code      string // 세종처럼 이름으로 못 찾는 곳만 직접 준다
++	Legacy    bool   // "(구)동구"처럼 폐지·개편 전 이름. 같은 코드에 현재 이름 행이 있으면 그쪽이 이긴다
++	Aggregate bool   // 전국·시도·시지역·군지역 같은 집계 행(적재 대상 아님)
++}
++
++// parseRegion은 API 지역 경로를 해석한다. 시도 약칭을 모르면 Name이 비고 Aggregate도 아니다(미매핑으로 센다).
++//
++// 확인한 모양(2026-10-28 운영 서버 응답): "부산>중구", "경기>화성시>만세구", "세종", "인천>(구)동구",
++// "전남광주>광주>광산구"(광주광역시 구), "전남광주>순천시"(전라남도 시군), 집계 "서울", "경기>시지역".
++func parseRegion(grp string) place {
++	grp = strings.TrimSpace(grp)
++	if grp == "" {
++		return place{Aggregate: true} // 전국
++	}
++	parts := strings.Split(grp, ">")
++	var p place
++	for i := range parts {
++		s := strings.TrimSpace(parts[i])
++		if strings.HasPrefix(s, "(구)") {
++			p.Legacy = true
++			s = strings.TrimSpace(strings.TrimPrefix(s, "(구)"))
++		}
++		if s == "시지역" || s == "군지역" {
++			return place{Aggregate: true}
++		}
++		parts[i] = s
++	}
++	if len(parts) == 1 {
++		if parts[0] == "세종" {
++			p.Code = priceindex.SejongCode // 시군구 단계가 없는 시도
++			return p
++		}
++		return place{Aggregate: true} // 시도·권역 집계
++	}
++
++	var sido string
++	rest := parts[1:]
++	if parts[0] == "전남광주" {
++		// R-ONE은 광주와 전남을 한 묶음으로 낸다. 주소 DB는 광주광역시·전라남도로 나뉘어 있다.
++		if parts[1] == "광주" {
++			if len(parts) == 2 {
++				return place{Aggregate: true} // 광주 전체
++			}
++			sido, rest = "광주광역시", parts[2:]
++		} else {
++			sido = "전라남도"
++		}
++	} else {
++		sido = priceindex.SidoFull(parts[0])
++		if sido == "" {
++			return place{Legacy: p.Legacy} // 모르는 시도: 미매핑
++		}
++	}
++	p.Name = sido + " " + strings.Join(rest, " ")
++	return p
++}
+diff --git a/internal/etl/rone/region_test.go b/internal/etl/rone/region_test.go
+new file mode 100644
+index 0000000..e08b743
+--- /dev/null
++++ b/internal/etl/rone/region_test.go
+@@ -0,0 +1,108 @@
++package rone
++
++import (
++	"reflect"
++	"testing"
++)
++
++func TestParseRegion(t *testing.T) {
++	// 지역 이름은 운영 서버 프로브 출력(2026-10-28)에 나온 값 그대로다.
++	cases := map[string]place{
++		"부산>중구":       {Name: "부산광역시 중구"},
++		"경기>화성시":      {Name: "경기도 화성시"},
++		"경기>화성시>만세구":  {Name: "경기도 화성시 만세구"},
++		"세종":          {Code: "36110"},
++		"인천>(구)동구":    {Name: "인천광역시 동구", Legacy: true},
++		"전남광주>광주>광산구": {Name: "광주광역시 광산구"},
++		"전남광주>광주":     {Aggregate: true},
++		"전남광주>순천시":    {Name: "전라남도 순천시"},
++		"서울":          {Aggregate: true},
++		"전국":          {Aggregate: true},
++		"":            {Aggregate: true},
++		"경기>시지역":      {Aggregate: true},
++		"강원>군지역":      {Aggregate: true},
++		"없는도>어딘가":     {},
++		" 대구 > 군위군 ":  {Name: "대구광역시 군위군"},
++		"강원>춘천시":      {Name: "강원특별자치도 춘천시"},
++	}
++	for in, want := range cases {
++		if got := parseRegion(in); !reflect.DeepEqual(got, want) {
++			t.Errorf("parseRegion(%q) = %+v, want %+v", in, got, want)
++		}
++	}
++}
++
++func TestBuild(t *testing.T) {
++	xw := map[string]string{
++		"부산광역시 중구":    "26110",
++		"경기도 수원시 장안구": "41111",
++		"경기도 화성시":     "41590", // 주소 DB가 구 신설 전이면 시 단위만 있다
++		"인천광역시 서구":    "28260",
++		"인천광역시 동구":    "28140",
++		"광주광역시 광산구":   "29200",
++		"전라남도 순천시":    "46150",
++		// "경기도 수원시"는 구가 여럿이라 크로스워크에서 빠져 있다
++	}
++	r := func(grp, zone string, v float64) Row { return Row{Region: grp, Zone: zone, Month: "202606", Rate: v} }
++	rows := []Row{
++		r("부산>중구", "주거지역", 0.016),
++		r("인천>(구)서구", "주거지역", 9), // 같은 코드에 현재 이름 행이 뒤에 온다 -> 버림
++		r("인천>서구", "주거지역", 0.2),
++		r("인천>(구)동구", "주거지역", 0.3), // 현재 이름 행이 없다 -> 그대로 씀
++		r("경기>수원시", "주거지역", 5),     // 하위 구가 있는 시 집계 -> 집계로 셈
++		r("경기>수원시>장안구", "주거지역", 0.4),
++		r("경기>화성시", "주거지역", 0.5),
++		r("경기>화성시>만세구", "주거지역", 7), // 주소 DB에 없는 신설 구 -> 미매핑
++		r("세종", "주거지역", 0.6),
++		r("전남광주>광주>광산구", "녹지지역", 0.7),
++		r("전남광주>순천시", "관리(통합)지역", 0.8),
++		r("서울", "주거지역", 1),
++		r("부산>중구", "주거지역", 99), // 같은 키 두 번째 -> 첫 행만
++	}
++	st := &Stats{}
++	unknown := map[string]bool{}
++	got := build(rows, xw, st, unknown)
++	want := []rec{
++		{"26110", "주거지역", "202606", 0.016, false},
++		{"28260", "주거지역", "202606", 0.2, false},
++		{"28140", "주거지역", "202606", 0.3, true},
++		{"41111", "주거지역", "202606", 0.4, false},
++		{"41590", "주거지역", "202606", 0.5, false},
++		{"36110", "주거지역", "202606", 0.6, false},
++		{"29200", "녹지지역", "202606", 0.7, false},
++		{"46150", "관리(통합)지역", "202606", 0.8, false},
++	}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("build:\n got %+v\nwant %+v", got, want)
++	}
++	if st.Aggregate != 2 || st.Unmapped != 1 || st.Superseded != 1 || st.Dup != 1 {
++		t.Fatalf("stats %+v", st)
++	}
++	if !unknown["경기>화성시>만세구"] || len(unknown) != 1 {
++		t.Fatalf("unknown %v", unknown)
++	}
++}
++
++func TestPickAndMonthRange(t *testing.T) {
++	ms, err := monthRange("202511", "202602")
++	if err != nil || !reflect.DeepEqual(ms, []string{"202511", "202512", "202601", "202602"}) {
++		t.Fatalf("monthRange %v %v", ms, err)
++	}
++	for _, bad := range [][2]string{{"202602", "202511"}, {"2025", "202602"}, {"202513", "202602"}} {
++		if _, err := monthRange(bad[0], bad[1]); err == nil {
++			t.Errorf("%v should fail", bad)
++		}
++	}
++	all := []string{"202601", "202602", "202603", "202604", "202605", "202606"}
++	// 받은 달 202601~202604, 마지막 2개월은 다시 -> 202603~202606
++	got := pick(all, []string{"202601", "202602", "202603", "202604"}, 2)
++	if !reflect.DeepEqual(got, []string{"202603", "202604", "202605", "202606"}) {
++		t.Fatalf("pick %v", got)
++	}
++	if got := pick(all, nil, 3); !reflect.DeepEqual(got, all) {
++		t.Fatalf("pick first run %v", got)
++	}
++	if got := pick(all, all, 0); got != nil {
++		t.Fatalf("pick all loaded, refetch 0: %v", got)
++	}
++}
+diff --git a/internal/etl/rone/rone.go b/internal/etl/rone/rone.go
+new file mode 100644
+index 0000000..842fa50
+--- /dev/null
++++ b/internal/etl/rone/rone.go
+@@ -0,0 +1,227 @@
++// Package rone은 한국부동산원 R-ONE Open API에서 "(월) 용도지역별 지가변동률"(A_2024_00007)을 받아
++// land_price_index에 적재한다. 손으로 받던 포털 JSON(10개월)을 대신해 2005년부터 백필하고, 이후 새 달만 받는다.
++//
++// 응답 구조(2026-10-28 운영 서버에서 확인): GRP_FULLNM = 지역 경로("부산>중구", "경기>화성시>만세구", "세종",
++// "전남광주>광주>광산구"), CLS_FULLNM = 용도지역("주거지역" 등 10종), DTA_VAL = 변동률(%).
++// 원칙: 원값 그대로 적재(재분류·보정 없음). 집계 행(전국·시도·시지역·군지역)은 건너뛴다.
++package rone
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/url"
++	"strconv"
++	"strings"
++	"time"
++)
++
++const (
++	// StatblID는 "(월) 용도지역별 지가변동률" 통계표다.
++	StatblID = "A_2024_00007"
++	baseURL  = "https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do"
++	pageSize = 1000
++	maxPages = 50
++)
++
++// Row는 API 한 행이다.
++type Row struct {
++	Region string  // GRP_FULLNM, 없으면 ""(전국 집계)
++	Zone   string  // CLS_FULLNM
++	Month  string  // YYYYMM
++	Rate   float64 // DTA_VAL
++}
++
++// Client는 API 호출기다. Key는 오류 메시지에 남기지 않는다.
++type Client struct {
++	Key       string
++	HTTP      *http.Client
++	Base      string        // 테스트에서 바꾼다
++	Pause     time.Duration // 호출 사이 간격
++	RetryWait time.Duration // 0이면 2초
++	Calls     int
++}
++
++// APIError는 재시도하지 않는 오류(키·권한 등)다.
++type APIError struct{ Msg string }
++
++func (e *APIError) Error() string { return "r-one api: " + e.Msg }
++
++type apiResp struct {
++	Data []struct {
++		Head []json.RawMessage `json:"head"`
++		Row  []struct {
++			Grp   *string  `json:"GRP_FULLNM"`
++			Cls   *string  `json:"CLS_FULLNM"`
++			Month string   `json:"WRTTIME_IDTFR_ID"`
++			Val   *float64 `json:"DTA_VAL"`
++		} `json:"row"`
++	} `json:"SttsApiTblData"`
++	Result *struct {
++		Code    string `json:"CODE"`
++		Message string `json:"MESSAGE"`
++	} `json:"RESULT"`
++}
++
++// isNoData는 아직 공표되지 않은 달 등 "해당하는 데이터가 없습니다" 응답인지 본다.
++// 운영 서버 프로브에서 문구는 확인했고 코드(INFO-200)는 공공 OpenAPI 관례라 둘 다 받는다.
++func isNoData(code, msg string) bool {
++	return code == "INFO-200" || strings.Contains(msg, "해당하는 데이터가 없습니다")
++}
++
++// FetchMonth는 한 달치를 모두 받는다. 아직 공표 전이면 (nil, false, nil).
++func (c *Client) FetchMonth(ctx context.Context, month string) ([]Row, bool, error) {
++	var out []Row
++	total, got := -1, 0
++	for p := 1; p <= maxPages; p++ {
++		r, err := c.getPage(ctx, month, p)
++		if err != nil {
++			return nil, false, err
++		}
++		code, msg, t := pageMeta(r)
++		if isNoData(code, msg) {
++			if p == 1 {
++				return nil, false, nil
++			}
++			return out, true, nil // 마지막 페이지를 넘겼다
++		}
++		if code != "INFO-000" {
++			// 정상 응답은 항상 INFO-000을 싣는다. 코드가 없거나 다르면(키 오류 등) 멈춘다.
++			return nil, false, &APIError{Msg: fmt.Sprintf("%q %s: %s", code, month, c.redact(msg))}
++		}
++		if total < 0 {
++			total = t
++		}
++		n := 0
++		for _, d := range r.Data {
++			for _, row := range d.Row {
++				n++
++				if row.Val == nil || row.Cls == nil {
++					continue
++				}
++				reg := ""
++				if row.Grp != nil {
++					reg = *row.Grp
++				}
++				out = append(out, Row{Region: reg, Zone: strings.TrimSpace(*row.Cls), Month: row.Month, Rate: *row.Val})
++			}
++		}
++		got += n // 값이 빈 행도 센다. 건수는 원 행 기준이다
++		if n == 0 || got >= total {
++			return out, true, nil
++		}
++	}
++	return nil, false, &APIError{Msg: fmt.Sprintf("%s: more than %d pages", month, maxPages)}
++}
++
++// pageMeta는 결과 코드와 전체 건수를 꺼낸다. 정상 응답은 head 안에, 오류 응답은 최상위 RESULT에 코드가 온다.
++func pageMeta(r *apiResp) (code, msg string, total int) {
++	if r.Result != nil {
++		return r.Result.Code, r.Result.Message, 0
++	}
++	for _, d := range r.Data {
++		for _, h := range d.Head {
++			var m map[string]json.RawMessage
++			if json.Unmarshal(h, &m) != nil {
++				continue
++			}
++			if v, ok := m["list_total_count"]; ok {
++				_ = json.Unmarshal(v, &total)
++			}
++			if v, ok := m["RESULT"]; ok {
++				var res struct{ CODE, MESSAGE string }
++				if json.Unmarshal(v, &res) == nil {
++					code, msg = res.CODE, res.MESSAGE
++				}
++			}
++		}
++	}
++	return code, msg, total
++}
++
++func (c *Client) getPage(ctx context.Context, month string, page int) (*apiResp, error) {
++	q := url.Values{}
++	q.Set("KEY", c.Key)
++	q.Set("Type", "json")
++	q.Set("STATBL_ID", StatblID)
++	q.Set("DTACYCLE_CD", "MM")
++	q.Set("WRTTIME_IDTFR_ID", month)
++	q.Set("pIndex", strconv.Itoa(page))
++	q.Set("pSize", strconv.Itoa(pageSize))
++	base := c.Base
++	if base == "" {
++		base = baseURL
++	}
++	u := base + "?" + q.Encode()
++	var lastErr error
++	for attempt := 0; attempt < 3; attempt++ {
++		if attempt > 0 {
++			w := c.RetryWait
++			if w == 0 {
++				w = 2 * time.Second
++			}
++			time.Sleep(time.Duration(attempt*attempt) * w)
++		}
++		if c.Pause > 0 && c.Calls > 0 {
++			time.Sleep(c.Pause)
++		}
++		c.Calls++
++		body, status, err := c.get(ctx, u)
++		if err != nil || status >= 500 {
++			if err == nil {
++				err = fmt.Errorf("http %d", status)
++			}
++			lastErr = err
++			continue
++		}
++		if status != http.StatusOK {
++			return nil, &APIError{Msg: fmt.Sprintf("http %d: %s", status, c.redact(snippet(body)))}
++		}
++		var r apiResp
++		if err := json.Unmarshal(body, &r); err != nil {
++			return nil, &APIError{Msg: "not json: " + c.redact(snippet(body))}
++		}
++		return &r, nil
++	}
++	return nil, fmt.Errorf("%s page %d: %s", month, page, c.redact(lastErr.Error()))
++}
++
++func (c *Client) get(ctx context.Context, u string) ([]byte, int, error) {
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
++	if err != nil {
++		return nil, 0, err
++	}
++	hc := c.HTTP
++	if hc == nil {
++		hc = &http.Client{Timeout: 60 * time.Second}
++	}
++	res, err := hc.Do(req)
++	if err != nil {
++		var ue *url.Error
++		if errors.As(err, &ue) {
++			return nil, 0, fmt.Errorf("request failed: %v", ue.Err) // 요청 주소(키 포함)를 남기지 않는다
++		}
++		return nil, 0, errors.New("request failed")
++	}
++	defer res.Body.Close()
++	body, err := io.ReadAll(io.LimitReader(res.Body, 32<<20))
++	return body, res.StatusCode, err
++}
++
++func (c *Client) redact(s string) string {
++	if c.Key == "" {
++		return s
++	}
++	return strings.ReplaceAll(strings.ReplaceAll(s, c.Key, "***"), url.QueryEscape(c.Key), "***")
++}
++
++func snippet(b []byte) string {
++	s := strings.TrimSpace(string(b))
++	if len(s) > 300 {
++		s = s[:300]
++	}
++	return s
++}
+diff --git a/internal/etl/rone/rone_test.go b/internal/etl/rone/rone_test.go
+new file mode 100644
+index 0000000..6b3f523
+--- /dev/null
++++ b/internal/etl/rone/rone_test.go
+@@ -0,0 +1,114 @@
++package rone
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++)
++
++// 정상 응답 모양(2026-10-28 운영 서버 프로브): head에 건수와 RESULT, 다음 원소에 row.
++const okPage = `{"SttsApiTblData":[{"head":[{"list_total_count":%d},{"RESULT":{"CODE":"INFO-000","MESSAGE":"정상 처리되었습니다."}}]},{"row":[%s]}]}`
++const rowTmpl = `{"WRTTIME_IDTFR_ID":"%s","GRP_FULLNM":%s,"CLS_FULLNM":"%s","ITM_FULLNM":"지가변동률","DTA_VAL":%s}`
++const noDataPage = `{"RESULT":{"CODE":"INFO-200","MESSAGE":"해당하는 데이터가 없습니다."}}`
++
++func TestFetchMonthPagesUntilTotal(t *testing.T) {
++	// 3건을 1건씩 3페이지로 준다. 값이 빈 행(null)도 건수에는 들어가므로 끝까지 넘겨야 한다.
++	var calls int
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		q := r.URL.Query()
++		if q.Get("KEY") != "SECRET" || q.Get("STATBL_ID") != StatblID || q.Get("DTACYCLE_CD") != "MM" || q.Get("WRTTIME_IDTFR_ID") != "202606" || q.Get("Type") != "json" {
++			t.Errorf("bad query: %v", q)
++		}
++		var row string
++		switch q.Get("pIndex") {
++		case "1":
++			row = fmt.Sprintf(rowTmpl, "202606", `"부산>중구"`, "주거지역", "0.016")
++		case "2":
++			row = fmt.Sprintf(rowTmpl, "202606", `"부산>중구"`, "상업지역", "null")
++		case "3":
++			row = fmt.Sprintf(rowTmpl, "202606", "null", "주거지역", "-0.1")
++		}
++		fmt.Fprintf(w, okPage, 3, row)
++	}))
++	defer srv.Close()
++	c := &Client{Key: "SECRET", Base: srv.URL}
++	rows, ok, err := c.FetchMonth(context.Background(), "202606")
++	if err != nil || !ok {
++		t.Fatalf("ok=%v err=%v", ok, err)
++	}
++	if calls != 3 || len(rows) != 2 {
++		t.Fatalf("calls=%d rows=%d, want 3/2", calls, len(rows))
++	}
++	if rows[0].Region != "부산>중구" || rows[0].Zone != "주거지역" || rows[0].Rate != 0.016 || rows[0].Month != "202606" {
++		t.Fatalf("row0 %+v", rows[0])
++	}
++	if rows[1].Region != "" || rows[1].Rate != -0.1 {
++		t.Fatalf("row1 (전국 집계) %+v", rows[1])
++	}
++}
++
++func TestFetchMonthNoDataAndAPIError(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Query().Get("WRTTIME_IDTFR_ID") == "209912" {
++			fmt.Fprint(w, noDataPage)
++			return
++		}
++		// 키 오류. 원문에 키가 섞여도 오류 메시지엔 남지 않아야 한다.
++		fmt.Fprint(w, `{"RESULT":{"CODE":"ERROR-290","MESSAGE":"인증키 SECRET 가 유효하지 않습니다."}}`)
++	}))
++	defer srv.Close()
++	c := &Client{Key: "SECRET", Base: srv.URL}
++	rows, ok, err := c.FetchMonth(context.Background(), "209912")
++	if err != nil || ok || rows != nil {
++		t.Fatalf("no data: rows=%v ok=%v err=%v", rows, ok, err)
++	}
++	_, _, err = c.FetchMonth(context.Background(), "202606")
++	var ae *APIError
++	if !errors.As(err, &ae) || !strings.Contains(err.Error(), "ERROR-290") {
++		t.Fatalf("want APIError ERROR-290, got %v", err)
++	}
++	if strings.Contains(err.Error(), "SECRET") {
++		t.Fatalf("key leaked: %v", err)
++	}
++}
++
++func TestFetchMonthUnknownShapeStops(t *testing.T) {
++	// 결과 코드가 아예 없는 응답(HTML 오류 페이지 등을 JSON으로 착각한 경우)을 빈 달로 넘기면 안 된다.
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		fmt.Fprint(w, `{"something":"else"}`)
++	}))
++	defer srv.Close()
++	c := &Client{Key: "k", Base: srv.URL}
++	_, ok, err := c.FetchMonth(context.Background(), "202606")
++	var ae *APIError
++	if ok || !errors.As(err, &ae) {
++		t.Fatalf("want APIError, got ok=%v err=%v", ok, err)
++	}
++}
++
++func TestServerErrorRetriesThenFailsWithoutKey(t *testing.T) {
++	var calls int
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		w.WriteHeader(http.StatusBadGateway)
++	}))
++	defer srv.Close()
++	c := &Client{Key: "SECRET", Base: srv.URL, RetryWait: time.Millisecond}
++	_, _, err := c.FetchMonth(context.Background(), "202606")
++	if err == nil || calls != 3 {
++		t.Fatalf("want 3 attempts and error, got calls=%d err=%v", calls, err)
++	}
++	var ae *APIError
++	if errors.As(err, &ae) {
++		t.Fatalf("5xx should be retryable error, not APIError: %v", err)
++	}
++	if strings.Contains(err.Error(), "SECRET") {
++		t.Fatalf("key leaked: %v", err)
++	}
++}
+diff --git a/internal/etl/rone/sync.go b/internal/etl/rone/sync.go
+new file mode 100644
+index 0000000..b4abbe2
+--- /dev/null
++++ b/internal/etl/rone/sync.go
+@@ -0,0 +1,294 @@
++package rone
++
++import (
++	"context"
++	"fmt"
++	"io"
++	"math"
++	"sort"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/JO-HEEJIN/b2d_geo/internal/etl/priceindex"
++	"github.com/jackc/pgx/v5/pgxpool"
++)
++
++// Source는 이 적재기가 남기는 land_price_index.source 값이다(포털 파일 적재는 'reb_rone').
++const Source = "reb_rone_api"
++
++// Options는 한 번 실행의 범위다.
++type Options struct {
++	From, To string // YYYYMM, 양끝 포함
++	Refetch  int    // 이미 받은 달 중 마지막 N개월은 다시 받는다(공표 후 수정 대비)
++	Compare  bool   // 쓰지 않고 DB와 대조만(검증용). 범위 안의 모든 달을 받는다
++	Log      io.Writer
++}
++
++// Stats는 실행 결과다.
++type Stats struct {
++	Months     int      // 받은 달
++	NoData     []string // 아직 공표 전이라 비어 있던 달
++	Rows       int      // API 행
++	Records    int      // 적재(또는 대조)한 (시군구, 용도지역, 월)
++	Aggregate  int      // 집계 행이라 건너뜀
++	Unmapped   int      // 주소 DB에서 시군구를 못 찾아 건너뜀
++	Superseded int      // 같은 시군구에 현재 이름 행이 있어 버린 "(구)" 행
++	Dup        int      // 같은 시군구로 겹친 행(첫 행만 둠)
++	Unknown    []string // 미매핑 지역 이름(중복 없이)
++	Calls      int
++	Cmp        CompareStats
++}
++
++// CompareStats는 --compare 결과다.
++type CompareStats struct {
++	APIRecords, InDB, Same, Diff, OnlyDB int
++	Examples                             []string
++}
++
++type rec struct {
++	code, zone, month string
++	rate              float64
++	legacy            bool
++}
++
++// Run은 범위 안의 달을 받아 적재(또는 대조)한다. 받은 달은 DB에 남으므로 중간에 멈춰도 다음 실행이 이어 받는다.
++func Run(ctx context.Context, pool *pgxpool.Pool, c *Client, o Options) (*Stats, error) {
++	st := &Stats{}
++	months, err := monthRange(o.From, o.To)
++	if err != nil {
++		return st, err
++	}
++	logf := func(f string, a ...any) {
++		if o.Log != nil {
++			fmt.Fprintf(o.Log, f+"\n", a...)
++		}
++	}
++	xw, err := priceindex.Crosswalk(ctx, pool)
++	if err != nil {
++		return st, fmt.Errorf("crosswalk: %w", err)
++	}
++	todo := months
++	if !o.Compare {
++		if todo, err = pending(ctx, pool, months, o.Refetch); err != nil {
++			return st, err
++		}
++	}
++	logf("rone-sync: %s..%s months=%d todo=%d", o.From, o.To, len(months), len(todo))
++	unknown := map[string]bool{}
++	defer func() {
++		st.Calls = c.Calls
++		for n := range unknown {
++			st.Unknown = append(st.Unknown, n)
++		}
++		sort.Strings(st.Unknown)
++	}()
++	for _, m := range todo {
++		if err := ctx.Err(); err != nil {
++			return st, err
++		}
++		rows, ok, err := c.FetchMonth(ctx, m)
++		if err != nil {
++			return st, err
++		}
++		if !ok {
++			st.NoData = append(st.NoData, m)
++			continue
++		}
++		recs := build(rows, xw, st, unknown)
++		st.Months++
++		st.Rows += len(rows)
++		st.Records += len(recs)
++		if o.Compare {
++			if err := compare(ctx, pool, m, recs, &st.Cmp); err != nil {
++				return st, err
++			}
++		} else if err := upsert(ctx, pool, recs); err != nil {
++			return st, fmt.Errorf("%s: %w", m, err)
++		}
++		logf("rone-sync: %s rows=%d records=%d", m, len(rows), len(recs))
++	}
++	return st, nil
++}
++
++// pending은 받을 달이다: 아직 이 적재기로 받지 않은 달 + 받은 달 중 마지막 refetch개월.
++func pending(ctx context.Context, pool *pgxpool.Pool, months []string, refetch int) ([]string, error) {
++	rows, err := pool.Query(ctx, `SELECT DISTINCT month FROM land_price_index WHERE source=$1 AND month BETWEEN $2 AND $3 ORDER BY month`,
++		Source, months[0], months[len(months)-1])
++	if err != nil {
++		return nil, err
++	}
++	var loaded []string
++	for rows.Next() {
++		var m string
++		if err := rows.Scan(&m); err != nil {
++			rows.Close()
++			return nil, err
++		}
++		loaded = append(loaded, m)
++	}
++	rows.Close()
++	if err := rows.Err(); err != nil {
++		return nil, err
++	}
++	return pick(months, loaded, refetch), nil
++}
++
++// pick은 pending의 순수 계산 부분이다.
++func pick(months, loaded []string, refetch int) []string {
++	skip := map[string]bool{}
++	for i, m := range loaded {
++		if i < len(loaded)-refetch {
++			skip[m] = true
++		}
++	}
++	var out []string
++	for _, m := range months {
++		if !skip[m] {
++			out = append(out, m)
++		}
++	}
++	return out
++}
++
++// build는 API 행을 (시군구, 용도지역, 월) 레코드로 바꾼다. 같은 키가 겹치면 현재 이름 행이 "(구)" 행을 이기고,
++// 그 밖의 겹침은 첫 행만 둔다(한 번의 INSERT ... ON CONFLICT에 같은 키가 두 번 들어가면 실패한다).
++func build(rows []Row, xw map[string]string, st *Stats, unknown map[string]bool) []rec {
++	// 하위 지역이 있는 경로("경기>수원시")는 시 전체 집계다. 주소 DB에서 못 찾아도 미매핑으로 세지 않는다.
++	parents := map[string]bool{}
++	for _, r := range rows {
++		parts := strings.Split(r.Region, ">")
++		for i := 1; i < len(parts); i++ {
++			parents[strings.Join(parts[:i], ">")] = true
++		}
++	}
++	var out []rec
++	at := map[string]int{}
++	for _, r := range rows {
++		p := parseRegion(r.Region)
++		if p.Aggregate || r.Zone == "" {
++			st.Aggregate++
++			continue
++		}
++		code := p.Code
++		if code == "" {
++			code = xw[p.Name]
++		}
++		if code == "" {
++			if parents[r.Region] {
++				st.Aggregate++
++			} else {
++				st.Unmapped++
++				unknown[r.Region] = true
++			}
++			continue
++		}
++		x := rec{code: code, zone: r.Zone, month: r.Month, rate: r.Rate, legacy: p.Legacy}
++		k := code + "|" + r.Zone + "|" + r.Month
++		i, seen := at[k]
++		switch {
++		case !seen:
++			at[k] = len(out)
++			out = append(out, x)
++		case out[i].legacy && !x.legacy:
++			out[i] = x
++			st.Superseded++
++		case x.legacy && !out[i].legacy:
++			st.Superseded++
++		default:
++			st.Dup++
++		}
++	}
++	return out
++}
++
++func upsert(ctx context.Context, pool *pgxpool.Pool, recs []rec) error {
++	if len(recs) == 0 {
++		return nil
++	}
++	codes := make([]string, len(recs))
++	zones := make([]string, len(recs))
++	months := make([]string, len(recs))
++	rates := make([]string, len(recs))
++	for i, r := range recs {
++		codes[i], zones[i], months[i] = r.code, r.zone, r.month
++		rates[i] = strconv.FormatFloat(r.rate, 'f', -1, 64) // 원값 그대로(numeric으로 넣어 부동소수 꼬리를 만들지 않는다)
++	}
++	_, err := pool.Exec(ctx, `
++		INSERT INTO land_price_index (sigungu_code, use_zone_class, month, rate_pct, source, source_version)
++		SELECT c, z, m, r::numeric, $5, now()::date
++		FROM unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS t(c, z, m, r)
++		ON CONFLICT (sigungu_code, use_zone_class, month)
++		DO UPDATE SET rate_pct=EXCLUDED.rate_pct, source=EXCLUDED.source, source_version=EXCLUDED.source_version`,
++		codes, zones, months, rates, Source)
++	return err
++}
++
++// compare는 한 달치를 DB와 대조만 한다. 값 차이·API에만 있음·DB에만 있음을 센다.
++func compare(ctx context.Context, pool *pgxpool.Pool, month string, recs []rec, cs *CompareStats) error {
++	rows, err := pool.Query(ctx, `SELECT sigungu_code, use_zone_class, rate_pct::float8 FROM land_price_index WHERE month=$1`, month)
++	if err != nil {
++		return err
++	}
++	db := map[string]float64{}
++	for rows.Next() {
++		var c, z string
++		var v float64
++		if err := rows.Scan(&c, &z, &v); err != nil {
++			rows.Close()
++			return err
++		}
++		db[c+"|"+z] = v
++	}
++	rows.Close()
++	if err := rows.Err(); err != nil {
++		return err
++	}
++	example := func(s string) {
++		if len(cs.Examples) < 20 {
++			cs.Examples = append(cs.Examples, s)
++		}
++	}
++	onlyDBShown := 0
++	seen := map[string]bool{}
++	for _, r := range recs {
++		cs.APIRecords++
++		k := r.code + "|" + r.zone
++		seen[k] = true
++		v, ok := db[k]
++		if !ok {
++			continue
++		}
++		cs.InDB++
++		if math.Abs(v-r.rate) < 1e-9 {
++			cs.Same++
++		} else {
++			cs.Diff++
++			example(fmt.Sprintf("diff %s %s %s db=%v api=%v", month, r.code, r.zone, v, r.rate))
++		}
++	}
++	for k := range db {
++		if !seen[k] {
++			cs.OnlyDB++
++			if onlyDBShown < 3 { // 값 차이 예시가 묻히지 않게 달마다 3개까지만
++				onlyDBShown++
++				example(fmt.Sprintf("only-db %s %s", month, strings.Replace(k, "|", " ", 1)))
++			}
++		}
++	}
++	return nil
++}
++
++// monthRange는 from..to(YYYYMM, 양끝 포함)의 달 목록이다.
++func monthRange(from, to string) ([]string, error) {
++	f, err1 := time.Parse("200601", from)
++	t, err2 := time.Parse("200601", to)
++	if err1 != nil || err2 != nil || t.Before(f) {
++		return nil, fmt.Errorf("month range must be YYYYMM and from <= to: %q..%q", from, to)
++	}
++	var out []string
++	for m := f; !m.After(t); m = m.AddDate(0, 1, 0) {
++		out = append(out, m.Format("200601"))
++	}
++	return out, nil
++}
+diff --git a/internal/etl/rone/sync_pg_test.go b/internal/etl/rone/sync_pg_test.go
+new file mode 100644
+index 0000000..1f738f6
+--- /dev/null
++++ b/internal/etl/rone/sync_pg_test.go
+@@ -0,0 +1,108 @@
++package rone
++
++import (
++	"context"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++
++	"github.com/jackc/pgx/v5/pgxpool"
++)
++
++// TestRunAgainstPostgres는 실제 PostGIS(마이그레이션 적용된 빈 DB)에서 크로스워크·대조·적재·이어받기를 본다.
++// B2D_TEST_DATABASE_URL이 없으면 건너뛴다(운영 DB에 절대 쓰지 말 것: 아래에서 테이블을 비운다).
++func TestRunAgainstPostgres(t *testing.T) {
++	dsn := os.Getenv("B2D_TEST_DATABASE_URL")
++	if dsn == "" {
++		t.Skip("B2D_TEST_DATABASE_URL not set")
++	}
++	ctx := context.Background()
++	pool, err := pgxpool.New(ctx, dsn)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer pool.Close()
++	for _, q := range []string{
++		`TRUNCATE admin_areas, land_price_index`,
++		// 수원시는 구가 둘이라 "경기도 수원시"가 두 코드에 걸린다(크로스워크에서 빠져야 함). 세종은 시군구 단계가 없다.
++		`INSERT INTO admin_areas (bcode, name) VALUES
++		   ('2611010100','부산광역시 중구 영주동'),
++		   ('4111112900','경기도 수원시 장안구 파장동'),
++		   ('4111312800','경기도 수원시 권선구 세류동'),
++		   ('3611010100','세종특별자치시 반곡동')`,
++		// 포털 파일로 넣은 기존 값(202605): 부산 중구 주거 = API와 같음, 세종 주거 = 다름, 장안구 녹지 = API에 없음
++		`INSERT INTO land_price_index (sigungu_code, use_zone_class, month, rate_pct, source, source_version) VALUES
++		   ('26110','주거지역','202605',0.016,'reb_rone','2026-07-01'),
++		   ('36110','주거지역','202605',0.5,'reb_rone','2026-07-01'),
++		   ('41111','녹지지역','202605',0.1,'reb_rone','2026-07-01')`,
++	} {
++		if _, err := pool.Exec(ctx, q); err != nil {
++			t.Fatal(err)
++		}
++	}
++	var calls int
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		m := r.URL.Query().Get("WRTTIME_IDTFR_ID")
++		if m > "202606" {
++			fmt.Fprint(w, noDataPage)
++			return
++		}
++		rows := []string{
++			fmt.Sprintf(rowTmpl, m, `"부산>중구"`, "주거지역", "0.016"),
++			fmt.Sprintf(rowTmpl, m, `"세종"`, "주거지역", "0.123"),
++			fmt.Sprintf(rowTmpl, m, `"경기>수원시"`, "주거지역", "5"),
++			fmt.Sprintf(rowTmpl, m, `"경기>수원시>장안구"`, "주거지역", "-0.007"),
++			fmt.Sprintf(rowTmpl, m, `"경기"`, "주거지역", "1"),
++		}
++		fmt.Fprintf(w, okPage, len(rows), strings.Join(rows, ","))
++	}))
++	defer srv.Close()
++	newClient := func() *Client { return &Client{Key: "k", Base: srv.URL} }
++
++	// 1) 대조 모드: 쓰지 않는다. 202605에서 API 레코드 3(부산·세종·장안구 주거), DB에도 있는 것 2, 같음 1, 다름 1, DB에만 1.
++	st, err := Run(ctx, pool, newClient(), Options{From: "202605", To: "202605", Compare: true})
++	cs := st.Cmp
++	if err != nil || cs.APIRecords != 3 || cs.InDB != 2 || cs.Same != 1 || cs.Diff != 1 || cs.OnlyDB != 1 {
++		t.Fatalf("compare: %+v err=%v", cs, err)
++	}
++	if st.Aggregate != 2 || st.Unmapped != 0 {
++		t.Fatalf("compare stats: %+v", st)
++	}
++	var n int
++	pool.QueryRow(ctx, `SELECT count(*) FROM land_price_index WHERE source=$1`, Source).Scan(&n)
++	if n != 0 {
++		t.Fatalf("compare mode wrote %d rows", n)
++	}
++
++	// 2) 적재: 202605~202607. 202607은 공표 전(빈 달).
++	o := Options{From: "202605", To: "202607", Refetch: 1}
++	calls = 0
++	st, err = Run(ctx, pool, newClient(), o)
++	if err != nil || st.Months != 2 || st.Records != 6 || calls != 3 || len(st.NoData) != 1 || st.NoData[0] != "202607" {
++		t.Fatalf("load: %+v calls=%d err=%v", st, calls, err)
++	}
++	var rate, src string
++	pool.QueryRow(ctx, `SELECT rate_pct::text, source FROM land_price_index WHERE sigungu_code='36110' AND use_zone_class='주거지역' AND month='202605'`).Scan(&rate, &src)
++	if rate != "0.123" || src != Source {
++		t.Fatalf("세종 202605 = %s (%s), want 0.123 from API", rate, src)
++	}
++	pool.QueryRow(ctx, `SELECT rate_pct::text FROM land_price_index WHERE sigungu_code='41111' AND use_zone_class='주거지역' AND month='202606'`).Scan(&rate)
++	if rate != "-0.007" {
++		t.Fatalf("장안구 = %s, want -0.007 (시 집계 5가 들어가면 안 됨)", rate)
++	}
++	pool.QueryRow(ctx, `SELECT count(*) FROM land_price_index WHERE sigungu_code='41113'`).Scan(&n)
++	if n != 0 {
++		t.Fatalf("권선구에 시 집계가 들어감: %d", n)
++	}
++
++	// 3) 이어받기: 받은 달(202605, 202606) 중 마지막 1개월 + 빈 달만 다시 받는다 = 2호출.
++	calls = 0
++	st, err = Run(ctx, pool, newClient(), o)
++	if err != nil || calls != 2 || st.Months != 1 {
++		t.Fatalf("resume: %+v calls=%d err=%v", st, calls, err)
++	}
++}
+diff --git a/internal/places/search.go b/internal/places/search.go
+index 40308cd..0fc318d 100644
+--- a/internal/places/search.go
++++ b/internal/places/search.go
+@@ -76,9 +76,10 @@ func Nearby(ctx context.Context, pool *pgxpool.Pool, category string, lon, lat,
+ 		       COALESCE(jibun_address,''), ST_X(geom), ST_Y(geom), 0::float8
+ 		FROM places
+ 		WHERE ($1 = '' OR category_code = $1)
++		  AND geom && ST_Expand(ST_SetSRID(ST_MakePoint($2,$3),4326), $6)
+ 		  AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($2,$3),4326)::geography, $4)
+ 		ORDER BY geom <-> ST_SetSRID(ST_MakePoint($2,$3),4326)
+-		LIMIT $5`, category, lon, lat, radius, limit)
++		LIMIT $5`, category, lon, lat, radius, limit, radius/85000.0) // 상자 반폭 계산 근거는 revgeo.RadiusDeg
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/internal/revgeo/revgeo.go b/internal/revgeo/revgeo.go
+index 6cb1b4a..5518b97 100644
+--- a/internal/revgeo/revgeo.go
++++ b/internal/revgeo/revgeo.go
+@@ -18,6 +18,15 @@ type Result struct {
+ 	Point       [2]float64 `json:"point"`                  // 건물 좌표 [lon, lat]
+ }
+ 
++// RadiusDeg는 반경 m를 그 반경을 덮는 경위도 상자의 반폭(도)으로 바꾼다. 경도 1도는
++// 111.32km × cos(위도)라 한국 최북단(약 38.6도)에서 약 87km이므로 85km로 나눠 넉넉히 잡는다.
++//
++// KNN(ORDER BY <->)에 geography 캐스트 ST_DWithin만 걸면 인덱스가 반경 조건을 못 쓴다.
++// 반경 안에 건물이 하나도 없으면(바다·산·접경지) LIMIT을 채울 때까지 전국 데이터를 거리순으로
++// 끝까지 훑어 수십 초가 걸리고, 연결 풀이 막혀 다른 요청까지 멈춘다(2026-10-23 운영 장애).
++// geom && 상자 조건을 함께 주면 GiST가 상자 밖을 처음부터 배제한다.
++func RadiusDeg(m float64) float64 { return m / 85000.0 }
++
+ // ByPoint는 입력 좌표의 역지오코딩 결과를 만든다. 도로명주소·거리·건물좌표는
+ // 반경 maxM 이내 최근접 건물(KNN)에서, 법정동(bcode·명)은 그 점을 포함하는 필지
+ // (ST_Contains)에서 얻는다. 포함 필지가 없으면(하천·미등록 등) 건물 bcode로 폴백한다.
+@@ -29,9 +38,10 @@ func ByPoint(ctx context.Context, pool *pgxpool.Pool, lon, lat, maxM float64) (*
+ 		       ST_DistanceSphere(b.geom, ST_SetSRID(ST_MakePoint($1,$2),4326)),
+ 		       ST_X(b.geom), ST_Y(b.geom)
+ 		FROM buildings b LEFT JOIN admin_areas a ON a.bcode = b.bcode
+-		WHERE ST_DWithin(b.geom::geography, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, $3)
++		WHERE b.geom && ST_Expand(ST_SetSRID(ST_MakePoint($1,$2),4326), $4)
++		  AND ST_DWithin(b.geom::geography, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, $3)
+ 		ORDER BY b.geom <-> ST_SetSRID(ST_MakePoint($1,$2),4326)
+-		LIMIT 1`, lon, lat, maxM).
++		LIMIT 1`, lon, lat, maxM, RadiusDeg(maxM)).
+ 		Scan(&r.RoadAddress, &bldgBcode, &bldgName, &r.DistanceM, &r.Point[0], &r.Point[1])
+ 	if err != nil {
+ 		return nil, err
+diff --git a/migrations/013_ned_sync_progress.sql b/migrations/013_ned_sync_progress.sql
+new file mode 100644
+index 0000000..03738a8
+--- /dev/null
++++ b/migrations/013_ned_sync_progress.sql
+@@ -0,0 +1,10 @@
++-- 브이월드 국가중점데이터 API 배치 적재(ned-sync)의 법정동 단위 진행 기록.
++-- 한 동을 끝까지 받아 upsert한 뒤에만 기록하므로, 중간에 끊기면 그 동은 다음 실행에서 다시 받는다.
++CREATE TABLE IF NOT EXISTS ned_sync_progress (
++  dataset   text      NOT NULL,              -- 'price'(개별공시지가) | 'features'(토지특성)
++  base_year smallint  NOT NULL,
++  bcode     char(10)  NOT NULL,              -- 법정동 코드(필지 PNU 앞 10자리)
++  rows      integer   NOT NULL,              -- 그 동에서 받은 행 수(API totalCount 기준 수집분)
++  synced_at timestamptz NOT NULL DEFAULT now(),
++  PRIMARY KEY (dataset, base_year, bcode)
++);
+diff --git a/openapi.yaml b/openapi.yaml
+index d014468..cc194ab 100644
+--- a/openapi.yaml
++++ b/openapi.yaml
+@@ -405,6 +405,63 @@ paths:
+               example:
+                 error: { code: SALES_DISABLED, message: "MOLIT_API_KEY 미설정 — 실거래 조회 비활성 (운영자가 키 투입 후 재시작 필요)" }
+ 
++  /v1/appraisal/sales/recent:
++    get:
++      summary: 토지매매 실거래 최근 N개월 묶음 + 법정동 대표점 (realestate scope)
++      operationId: appraisalSalesRecent
++      description: |
++        이번 달을 포함한 최근 N개월(기본 3, 최대 6)의 MOLIT RTMSDataSvcLandTrade 원자료를
++        한 번에 반환한다. 원자료는 지번이 마스킹되어 있으므로 지도 표시용으로 시군구 아래
++        법정동마다 대표점(그 법정동 표준지 좌표의 평균)을 함께 준다. 월별 응답은 서버에 6시간
++        캐시된다. 일부 월이 실패하면 failed_months에 담고 나머지를 반환한다(전부 실패 시 502).
++        한 달 거래가 1,000건을 넘어 첫 페이지만 담긴 달은 truncated_months에 표시한다.
++        표준지가 적재되지 않은(실존하지 않는) 시군구 코드는 404. 보정/평가/추천 파생값 없음.
++      parameters:
++        - name: lawd_cd
++          in: query
++          required: true
++          description: 법정동 시군구 코드 5자리
++          schema: { type: string, minLength: 5, maxLength: 5 }
++        - name: months
++          in: query
++          required: false
++          description: 최근 몇 개월 (1~6, 기본 3)
++          schema: { type: integer, minimum: 1, maximum: 6, default: 3 }
++      responses:
++        "200":
++          description: 최근 N개월 실거래 목록과 법정동 대표점
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  source: { type: string }
++                  lawd_cd: { type: string }
++                  months: { type: array, items: { type: string, description: "YYYYMM, 최신순" } }
++                  failed_months: { type: array, items: { type: string } }
++                  truncated_months: { type: array, items: { type: string }, description: "1,000건 초과로 첫 페이지만 담긴 달" }
++                  total_count: { type: integer }
++                  items:
++                    type: array
++                    items: { $ref: "#/components/schemas/LandTradeItem" }
++                  umd_points:
++                    type: array
++                    items:
++                      type: object
++                      properties:
++                        name: { type: string, description: "admin_areas 원문 (시도 시군구 읍면동)" }
++                        lng: { type: number }
++                        lat: { type: number }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404":
++          description: 알 수 없는 시군구 코드 (표준지 미적재)
++        "429": { $ref: "#/components/responses/RateLimited" }
++        "502": { $ref: "#/components/responses/BadGateway" }
++        "503":
++          description: 실거래 조회 비활성 (서버에 MOLIT 키 미설정)
++
+   /v1/appraisal/price-index:
+     get:
+       summary: 지가변동률 사실조회 (realestate scope)
+diff --git a/web/embed_test.go b/web/embed_test.go
+index 2abf48d..4b78f32 100644
+--- a/web/embed_test.go
++++ b/web/embed_test.go
+@@ -49,7 +49,8 @@ func TestEveryPageUsesBrandAsset(t *testing.T) {
+ 				`rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png"`,
+ 				`rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png"`,
+ 				`property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png"`,
+-				`href="/styles.css?v=brand-c1abd2177e38"`,
++				// 스타일 변경 시 캐시 무효화 키도 함께 올린다 (2026-10 리포트 뷰 개편).
++				`href="/styles.css?v=ui-20261024"`,
+ 			} {
+ 				if !strings.Contains(html, required) {
+ 					t.Errorf("missing brand reference: %s", required)
+diff --git a/web/public/batch.html b/web/public/batch.html
+index a8de257..ce953e4 100644
+--- a/web/public/batch.html
++++ b/web/public/batch.html
+@@ -3,17 +3,17 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>배치 지오코딩 · b2d_geo</title>
++  <title>배치 지오코딩 · 올맵</title>
+   <meta name="description" content="주소 여러 건을 붙여넣으면 좌표·법정동코드로 한 번에. CSV로 내려받기.">
+   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+-  <meta property="og:image:alt" content="b2d_geo 로고">
+-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
++  <meta property="og:image:alt" content="올맵 로고">
++  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+ </head>
+ <body>
+   <header class="topbar">
+-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
++    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+     <nav>
+       <a href="/map.html">지도 데모</a>
+       <a href="/batch.html" class="active">배치</a>
+diff --git a/web/public/docs.html b/web/public/docs.html
+index 6f9f632..6d6e57f 100644
+--- a/web/public/docs.html
++++ b/web/public/docs.html
+@@ -3,17 +3,17 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>API 문서 · b2d_geo</title>
+-  <meta name="description" content="b2d_geo 위치·토지 인텔리전스 API 레퍼런스. 지오코딩·필지·감정평가 15개 엔드포인트, 브라우저에서 바로 실행.">
++  <title>API 문서 · 올맵</title>
++  <meta name="description" content="올맵(b2d_geo) 위치·토지 인텔리전스 API 레퍼런스. 지오코딩·필지·감정평가 16개 엔드포인트, 브라우저에서 바로 실행.">
+   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+-  <meta property="og:image:alt" content="b2d_geo 로고">
+-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
++  <meta property="og:image:alt" content="올맵 로고">
++  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+ </head>
+ <body>
+   <header class="topbar">
+-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
++    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+     <nav>
+       <a href="/map.html">지도 데모</a>
+       <a href="/batch.html">배치</a>
+diff --git a/web/public/docs.js b/web/public/docs.js
+index de2fc02..bbd6f99 100644
+--- a/web/public/docs.js
++++ b/web/public/docs.js
+@@ -54,6 +54,9 @@ const GROUPS = [
+       { m: "GET", path: "/appraisal/sales", desc: "토지 실거래(시군구·월)",
+         params: [{ n: "lawd_cd", req: true, def: "41450", note: "시군구코드 5자리" },
+           { n: "deal_ymd", req: true, def: "202401", note: "YYYYMM" }] },
++      { m: "GET", path: "/appraisal/sales/recent", desc: "토지 실거래 최근 N개월 + 법정동 대표점",
++        params: [{ n: "lawd_cd", req: true, def: "41450", note: "시군구코드 5자리" },
++          { n: "months", def: "3", note: "1~6, 기본 3" }] },
+       { m: "GET", path: "/appraisal/price-index", desc: "용도지역별 지가변동률(월)",
+         params: [{ n: "sigungu", req: true, def: "41450", note: "시군구코드 5자리" },
+           { n: "use_zone_class", req: true, def: "주거지역", note: "주거지역·상업지역·공업지역·녹지지역" }] },
+diff --git a/web/public/index.html b/web/public/index.html
+index cab0af1..677eb35 100644
+--- a/web/public/index.html
++++ b/web/public/index.html
+@@ -3,108 +3,82 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>b2d_geo — 대한민국 토지 인텔리전스 API</title>
+-  <meta name="description" content="주소를 좌표로, 좌표를 필지로, 필지를 공시지가·용도지역·실거래·감정평가급 데이터로. 카카오·네이버가 못 파는 토지 데이터 그래프.">
++  <title>올맵 — 주소 하나로 보는 토지 정보 리포트</title>
++  <meta name="description" content="주소 하나로 공시지가·용도지역·최근 실거래·지가변동률을 한 화면에 모으고 리포트로 출력합니다. 국토교통부·한국부동산원 공공데이터 원자료 기반.">
+   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+-  <meta property="og:image:alt" content="b2d_geo 로고">
+-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
++  <meta property="og:image:alt" content="올맵 로고">
++  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+ </head>
+ <body>
+   <header class="topbar">
+-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
++    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+     <nav>
+-      <a href="/map.html">지도 데모</a>
+-      <a href="/batch.html">배치</a>
+-      <a href="/docs.html">API 문서</a>
+-      <a href="/pricing.html">요금</a>
++      <a href="/map.html">지도로 찾기</a>
+       <button class="btn ghost" style="padding:7px 11px" onclick="toggleTheme()" aria-label="테마 전환">◐</button>
+     </nav>
+   </header>
+ 
+   <section class="hero">
+-    <span class="eyebrow">토지 인텔리전스 API</span>
+-    <h1>주소 한 줄에서 <span class="grad">필지·공시지가·감정평가</span>까지</h1>
+-    <p class="lead">대한민국 주소를 좌표로, 좌표를 필지로, 필지를 공시지가·용도지역·실거래·토지특성으로 잇습니다. 지오코딩을 넘어선 토지 데이터 그래프.</p>
+-
++    <span class="eyebrow">토지 정보 리포트</span>
++    <h1>주소 하나로, <span class="grad">그 땅의 모든 것</span></h1>
++    <p class="lead">공시지가, 용도지역, 최근 실거래, 지가 흐름을 한 화면에 모으고 리포트로 출력합니다. 여러 사이트를 오가며 옮겨 적던 일을 한 번의 검색으로 끝내세요.</p>
+     <form class="hero-search" id="heroForm">
+-      <input id="heroQ" type="text" placeholder="도로명주소로 지금 해보기 (예: 경기도 하남시 대청로 10)" autocomplete="off">
+-      <button class="btn" type="submit">조회 →</button>
++      <input id="heroQ" type="text" placeholder="도로명주소 입력 (예: 경기도 하남시 대청로 10)" autocomplete="off" aria-label="도로명주소">
++      <button class="btn" type="submit">리포트 보기</button>
+     </form>
+     <div class="hero-actions">
+-      <a class="btn ghost" href="/map.html">지도 데모 열기</a>
+-      <a class="btn ghost" href="/docs.html">API 문서 보기</a>
++      <a class="btn ghost" href="/map.html">지도에서 직접 찾기</a>
+     </div>
+-    <p class="hero-note">실데이터 · 무자격증 데모 · 브라우저에서 바로 실행</p>
+-
+-    <div class="graph">
++    <p class="hero-note">국토교통부·한국부동산원·국가공간정보 공공데이터 원자료 기반 · 감정평가가 아닌 참고 자료</p>
++    <div class="graph" aria-hidden="true">
+       <span class="node">주소</span><span class="arrow">→</span>
+-      <span class="node accent">좌표</span><span class="arrow">→</span>
+-      <span class="node accent">필지 PNU</span><span class="arrow">→</span>
++      <span class="node accent">필지</span><span class="arrow">→</span>
+       <span class="node gold">공시지가</span><span class="arrow">→</span>
+       <span class="node">용도지역</span><span class="arrow">→</span>
+-      <span class="node">실거래</span><span class="arrow">→</span>
+-      <span class="node gold">감정평가</span>
++      <span class="node gold">최근 실거래</span><span class="arrow">→</span>
++      <span class="node">지가 흐름</span><span class="arrow">→</span>
++      <span class="node accent">리포트</span>
+     </div>
+   </section>
+ 
+   <div class="wrap">
+     <section class="section">
+-      <h2>누가 쓰나요</h2>
+-      <p class="sub">지도 위에서 클릭 한 번으로 토지를 이해하는 사람부터, 15개 엔드포인트를 코드에 붙이는 개발자까지.</p>
+-      <div class="split">
+-        <div class="audience">
+-          <div class="ic">🗺️</div>
+-          <h3>바로 써보고 싶다면</h3>
+-          <p>설치도 가입도 없이, 주소를 검색하거나 지도를 클릭하면 그 땅의 필지 경계·공시지가·용도지역·토지특성·주변 상가가 한눈에 뜹니다.</p>
+-          <ul>
+-            <li>필지 경계 폴리곤을 지도에 표시</li>
+-            <li>개별공시지가·용도지역·토지특성</li>
+-            <li>주변 표준지·상가 오버레이</li>
+-          </ul>
+-          <a class="btn" href="/map.html">지도 데모 열기</a>
+-        </div>
+-        <div class="audience">
+-          <div class="ic">⌨️</div>
+-          <h3>서비스에 붙이고 싶다면</h3>
+-          <p>REST 15개 엔드포인트. 브라우저에서 바로 실행해보고, 응답 예시를 확인하고, Bearer 키 하나로 연동하세요. 모든 응답은 공공데이터 사실만 반환합니다.</p>
+-          <ul>
+-            <li>지오코딩·역지오코딩·일괄 처리</li>
+-            <li>필지·공시지가·용도지역·실거래</li>
+-            <li>문서에서 바로 try-it-out</li>
+-          </ul>
+-          <a class="btn" href="/docs.html">API 문서 보기</a>
+-        </div>
++      <h2>이렇게 씁니다</h2>
++      <p class="sub">검색 한 번이면 그 땅을 설명하는 데 필요한 숫자가 한 장에 모입니다.</p>
++      <div class="features">
++        <div class="feat"><div class="step">01</div><h3>주소만 입력</h3><p>도로명주소를 넣거나 지도를 누르면 필지 경계와 공시지가, 용도지역, 토지특성이 바로 뜹니다. 면적과 단가는 ㎡와 평으로 함께 보여줍니다.</p></div>
++        <div class="feat"><div class="step">02</div><h3>동네 거래와 흐름</h3><p>같은 동의 최근 3개월 토지 실거래를 평당가와 함께 모아 보고, 지가변동률은 기간을 바꿔 가며 그래프로 확인합니다.</p></div>
++        <div class="feat"><div class="step">03</div><h3>리포트로 출력</h3><p>조회한 내용을 A4 리포트로 출력하거나 PDF로 저장해 보고서 초안, 고객 안내 자료로 바로 씁니다.</p></div>
+       </div>
+     </section>
+ 
+     <section class="section" style="padding-top:0">
+-      <h2>왜 b2d_geo인가</h2>
+-      <p class="sub">범용 지오코더는 좌표에서 멈춥니다. 우리는 그 좌표가 어떤 땅인지까지 답합니다.</p>
++      <h2>믿을 수 있는 숫자만</h2>
++      <p class="sub">보여주는 모든 값에는 출처가 있습니다. 임의로 보정하거나 추정한 값을 섞지 않습니다.</p>
+       <div class="features">
+-        <div class="feat"><div class="ic">🧭</div><h3>좌표는 PDF가 아니라 원자료에서</h3><p>지오메트리는 지적·주소 원본에서, 값은 공공데이터에서. 보정·추정·추천 없이 사실만.</p></div>
+-        <div class="feat"><div class="ic">🏗️</div><h3>아무도 안 파는 깊이</h3><p>주소→필지→공시지가→용도지역→실거래→감정평가. 카카오·네이버·구글에 없는 토지 그래프.</p></div>
+-        <div class="feat"><div class="ic">🔒</div><h3>온프레미스까지</h3><p>데이터 residency가 필요한 조직을 위한 무제한 내부 호출 라이선스. 콜당 과금 없음.</p></div>
++        <div class="feat"><h3>공공데이터 원자료</h3><p>국토교통부 실거래, 한국부동산원 지가변동률, 국가공간정보 지적·용도지역 원자료를 그대로 씁니다.</p></div>
++        <div class="feat"><h3>흩어진 정보를 한 곳에</h3><p>공시지가 조회, 토지이용계획 열람, 실거래가 공개 시스템을 따로 찾아다닐 필요가 없습니다.</p></div>
++        <div class="feat"><h3>판단은 전문가에게</h3><p>가격 판단은 하지 않습니다. 감정평가와 투자 판단에 필요한 사실 자료를 빠르게 모으는 데 집중합니다.</p></div>
+       </div>
+     </section>
+   </div>
+ 
+   <footer class="landing-foot">
+     <div>
+-      <a href="/map.html">지도 데모</a>·
+-      <a href="/docs.html">API 문서</a>·
+-      <a href="/pricing.html">요금제</a>·
++      <a href="/map.html">지도</a>·
+       <a href="/terms.html">이용약관</a>·
+       <a href="/privacy.html">개인정보처리방침</a>·
+       <a href="/refund.html">환불정책</a>
+     </div>
++    <p class="dev-links">개발자: <a href="/docs.html">API 문서</a>·<a href="/batch.html">대량 조회</a>·<a href="/pricing.html">요금</a></p>
+     <p style="margin-top:12px">데이터: 국토교통부·행정안전부·한국부동산원·NSDI 공공데이터 · 공공누리 약관 준수</p>
+     <p style="margin-top:14px">비투디 | 대표: 조희진 | 사업자등록번호: 211-25-67093 | 통신판매업신고번호: 2026-경기하남-1593</p>
+     <p style="margin-top:6px">경기도 하남시 미사강변남로 99, 1401호 | 전화: 070-8983-4287 | 이메일: info@birth2death.com</p>
+   </footer>
+ 
+-  <script src="/shared.js"></script>
++  <script src="/shared.js?v=ui-20261024"></script>
+   <script>
+     document.getElementById("heroForm").addEventListener("submit", (e) => {
+       e.preventDefault();
+diff --git a/web/public/llms.txt b/web/public/llms.txt
+index 0624777..8c539f7 100644
+--- a/web/public/llms.txt
++++ b/web/public/llms.txt
+@@ -1,4 +1,4 @@
+-# b2d_geo — Korean land intelligence API (지오코딩·필지·공시지가·용도지역·실거래)
++# 올맵 (b2d_geo) — Korean land intelligence API (지오코딩·필지·공시지가·용도지역·실거래)
+ 
+ Base URL: https://api.birth2death.com/v1
+ Auth: Authorization: Bearer <API_KEY> (or X-API-Key header). /v1/health needs no auth.
+@@ -22,6 +22,7 @@ Coordinates are [lon, lat], WGS84.
+ - GET /v1/appraisal/land-use?pnu=        zoning: use zones/districts with relation (include/conflict/adjacent). scope: realestate
+ - GET /v1/appraisal/standard-lots?lon=&lat=&radius=   standard lots by distance. scope: realestate
+ - GET /v1/appraisal/sales?lawd_cd=&deal_ymd=          real land transactions (MOLIT), district + YYYYMM. scope: realestate
++- GET /v1/appraisal/sales/recent?lawd_cd=&months=     last N months (1-6, default 3) of land transactions + legal-dong centroids. scope: realestate
+ - GET /v1/appraisal/price-index?ym=      land price index. scope: realestate
+ - GET /v1/usage                          your key's usage, tier, monthly cap and remaining calls.
+ - GET /v1/health                         health check, no auth.
+diff --git a/web/public/map.html b/web/public/map.html
+index d68dcf9..c380a64 100644
+--- a/web/public/map.html
++++ b/web/public/map.html
+@@ -3,64 +3,76 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>지도 데모 · b2d_geo</title>
+-  <meta name="description" content="주소를 검색하고 지도를 클릭하면 필지·공시지가·용도지역·토지특성·주변 상가를 한눈에.">
++  <title>지도 · 올맵</title>
++  <meta name="description" content="주소 하나로 공시지가·용도지역·최근 실거래·지가변동률을 한 화면에 모으고 리포트로 출력합니다.">
+   <link rel="stylesheet" href="/vendor/leaflet.css">
+   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+-  <meta property="og:image:alt" content="b2d_geo 로고">
+-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
++  <meta property="og:image:alt" content="올맵 로고">
++  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+ </head>
+ <body>
+   <header class="topbar">
+-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
++    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+     <nav>
+-      <a href="/map.html" class="active">지도 데모</a>
+-      <a href="/batch.html">배치</a>
+-      <a href="/docs.html">API 문서</a>
++      <a href="/map.html" class="active">지도</a>
+       <button class="btn ghost" style="padding:7px 11px" onclick="toggleTheme()" aria-label="테마 전환">◐</button>
+     </nav>
+   </header>
+ 
+-  <div class="map-app">
++  <!-- 배치: 검색 전에는 [검색 패널 | 큰 지도]. 결과가 생기면 화이트보드 스케치대로
++       [사진+지도 (1/3) | 거래내역 | 지가변동률 | 판단 요약 + 출력] 4열로 바뀐다. -->
++  <div class="map-app" id="app">
+     <aside class="map-panel">
+       <div class="search-wrap">
+         <div class="search-row">
+           <input id="q" type="text" placeholder="도로명주소 입력 (예: 경기도 하남시 대청로 10)"
+-                 autocomplete="off" enterkeyhint="search">
++                 autocomplete="off" enterkeyhint="search" aria-label="도로명주소">
+           <button class="btn" id="go">검색</button>
+         </div>
+         <div class="examples" id="examples"></div>
+-        <p class="hint">주소를 검색하거나 <b>지도를 클릭</b>하면 그 지점의 토지 정보를 조회합니다.</p>
++        <p class="hint">주소를 검색하거나 <b>지도를 클릭</b>하면 그 땅의 정보를 모아 리포트로 보여줍니다.</p>
+       </div>
+       <div class="toggle-row">
+-        <label><input type="checkbox" id="poiToggle"> 주변 상가 표시</label>
+-        <label style="margin-left:auto"><input type="checkbox" id="lotsToggle"> 표준지 표시</label>
++        <label><input type="checkbox" id="salesToggle" checked> 거래 위치</label>
++        <label><input type="checkbox" id="lotsToggle"> 표준지</label>
++        <label><input type="checkbox" id="poiToggle"> 주변 상가</label>
++        <label id="aerialWrap" hidden><input type="checkbox" id="aerialToggle"> 항공사진</label>
+       </div>
+-      <div class="results" id="results">
+-        <div class="placeholder-msg">
+-          <div class="big">🗺️</div>
+-          주소 검색 또는 지도 클릭으로<br>토지 인텔리전스를 조회하세요.
+-        </div>
++      <div class="placeholder-msg" id="intro">
++        <div class="big">주소 하나로, 그 땅의 모든 것</div>
++        공시지가 · 용도지역 · 최근 실거래 · 지가변동률을<br>한 화면에 모으고 리포트로 출력합니다.
+       </div>
+     </aside>
+-    <div id="map"></div>
++
++    <div class="print-head" id="printHead"></div>
++
++    <section class="col-geo">
++      <div class="photo-box" id="photoBox">
++        <div class="col-title">해당 토지 사진 <small>항공사진</small></div>
++        <div id="photoMap" class="photo-map"></div>
++        <div class="photo-empty" id="photoEmpty" hidden>항공사진은 V-World 키를 설정하면 표시됩니다.</div>
++      </div>
++      <div id="map"></div>
++    </section>
++
++    <div class="results" id="results"></div>
+   </div>
+ 
+   <footer class="landing-foot">
+     <div>
+       <a href="/terms.html">이용약관</a>·
+       <a href="/privacy.html">개인정보처리방침</a>·
+-      <a href="/refund.html">환불정책</a>·
+-      <a href="/pricing.html">요금</a>
++      <a href="/refund.html">환불정책</a>
+     </div>
++    <p class="dev-links">개발자: <a href="/docs.html">API 문서</a>·<a href="/batch.html">대량 조회</a>·<a href="/pricing.html">요금</a></p>
+     <p style="margin-top:14px">비투디 | 대표: 조희진 | 사업자등록번호: 211-25-67093 | 통신판매업신고번호: 2026-경기하남-1593</p>
+     <p style="margin-top:6px">경기도 하남시 미사강변남로 99, 1401호 | 전화: 070-8983-4287 | 이메일: info@birth2death.com</p>
+   </footer>
+ 
+   <script src="/vendor/leaflet.js"></script>
+-  <script src="/shared.js"></script>
+-  <script src="/map.js"></script>
++  <script src="/shared.js?v=ui-20261024"></script>
++  <script src="/map.js?v=ui-20261028"></script>
+ </body>
+ </html>
+diff --git a/web/public/map.js b/web/public/map.js
+index c643129..982fd68 100644
+--- a/web/public/map.js
++++ b/web/public/map.js
+@@ -1,6 +1,9 @@
+-// 지도 데모: 주소 검색 또는 지도 클릭 → 그 지점의 필지·공시지가·용도지역·
+-// 토지특성·주변 상가·표준지를 조회해 지도와 패널에 표시한다. 좌표는 모두
+-// [lon, lat](GeoJSON 순서); Leaflet에는 [lat, lon]으로 넘긴다.
++// 지도 화면: 주소 검색 또는 지도 클릭 -> 그 필지의 공시지가·용도지역·토지특성·최근
++// 실거래·지가변동률을 모아 4열 리포트로 보여주고 A4로 출력한다.
++//   [사진+지도 1/3 | 거래내역 | 지가변동률 | 판단 요약 + 출력]  (2026-10 컨설팅 화이트보드)
++// 좌표는 모두 [lon, lat](GeoJSON 순서); Leaflet에는 [lat, lon]으로 넘긴다.
++// 모든 값은 공공데이터 사실이며, 요약 문장도 그 사실을 이어 붙인 것뿐이다
++// (감정평가·가격 판단 없음).
+ 
+ // Leaflet 기본 마커 아이콘 경로를 vendor로. mergeOptions로 전체 URL을 주면
+ // Leaflet이 CSS에서 자동 감지한 imagePath를 그 앞에 또 붙여 경로가 중복된다
+@@ -9,93 +12,215 @@
+ L.Icon.Default.imagePath = "/vendor/images/";
+ 
+ const map = L.map("map", { zoomControl: true }).setView([37.5665, 126.978], 11);
+-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
++const osmLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+   maxZoom: 19,
+   attribution: '© OpenStreetMap',
+ }).addTo(map);
++let aerialLayer = null; // 메인 지도용 V-World 영상+라벨. 키가 있을 때만 만든다.
++let photoMap = null;    // "해당 토지 사진" 칸의 항공사진 지도
++let photoParcel = null;
+ 
++const app = document.getElementById("app");
+ const results = document.getElementById("results");
+ let pinMarker = null;
+ let parcelLayer = null;
+ let poiLayer = L.layerGroup().addTo(map);
+ let lotsLayer = L.layerGroup().addTo(map);
++let salesLayer = L.layerGroup().addTo(map);
++let salesMarkers = new Map(); // 법정동명 -> marker
+ let lastPoint = null; // {lat, lon}
+ 
++// 조회 1회의 상태. 새 조회가 시작되면 queryId가 바뀌어, 늦게 도착한 이전 응답이
++// 화면을 덮어쓰지 않는다.
++let queryId = 0;
++let R = null;
++
+ const EXAMPLES = [
+   "경기도 하남시 대청로 10",
+   "서울특별시 중구 세종대로 110",
+   "경기도 성남시 분당구 판교역로 235",
+ ];
++const SALES_MONTHS = 3;
++const SPIN = `<span class="spin"></span>`;
+ 
+ // ---------- 조회 진입점 ----------
+ async function queryPoint(lat, lon, opts = {}) {
++  const my = ++queryId;
+   lastPoint = { lat, lon };
++  R = { address: null, parcel: null, umd: "", sgg: "", price: null, zones: [], features: null,
++        sales: null, index: null, done: { price: false, sales: false, index: false } };
+   setPin(lat, lon);
++  enterReportLayout();
+   if (!opts.keepView) map.setView([lat, lon], Math.max(map.getZoom(), 17));
+-  results.innerHTML = `<div class="loading"><span class="spin"></span>토지 정보 조회 중…</div>`;
++  results.innerHTML =
++    colShell("col-sales", "거래내역", "", `<div class="loading">${SPIN}</div>`) +
++    colShell("col-index", "지가변동률", "", `<div class="loading">${SPIN}</div>`) +
++    colShell("col-summary", "판단 요약", "", `<div class="loading">${SPIN}토지 정보 조회 중…</div>`);
+ 
+   // 1) 역지오코딩 + 필지(폴리곤 포함)를 병렬로.
+   const [rev, parcel] = await Promise.allSettled([
+     api("/reverse", { lat, lon }),
+     api("/parcel/by-point", { lat, lon, geometry: "true" }),
+   ]);
++  if (my !== queryId) return;
+ 
+-  let html = "";
+-  html += renderAddress(rev, parcel);
+-
++  R.address = addressOf(rev, parcel);
+   const parcelData = parcel.status === "fulfilled" ? parcel.value : null;
+   if (parcelData && parcelData.geometry) drawParcel(parcelData.geometry);
+   else clearParcel();
+-
+-  results.innerHTML = html + `<div class="loading" id="more"><span class="spin"></span>부동산 필드 조회 중…</div>`;
+-
+-  // 2) pnu가 있으면 감정평가 필드들을 병렬 조회.
+-  if (parcelData && parcelData.pnu) {
+-    const pnu = parcelData.pnu;
+-    const [price, landUse, features] = await Promise.allSettled([
+-      api("/appraisal/official-price", { pnu }),
+-      api("/appraisal/land-use", { pnu }),
+-      api("/appraisal/land-features", { pnu }),
+-    ]);
+-    let more = "";
+-    more += renderParcelCard(parcelData);
+-    more += renderPrice(price);
+-    more += renderFeatures(features);
+-    more += renderLandUse(landUse);
+-    more += renderDeep(parcelData);
+-    document.getElementById("more").outerHTML = more;
+-    wireDeep(parcelData);
+-  } else {
+-    document.getElementById("more").outerHTML =
+-      `<div class="card"><div class="body muted">이 지점에서 필지를 찾지 못했습니다. 건물·도로·하천 위이거나 적재되지 않은 지역일 수 있습니다.</div></div>`;
++  updatePhoto(parcelData && parcelData.geometry, lat, lon);
++  renderPrintHead();
++
++  if (!parcelData || !parcelData.pnu) {
++    const none = `<p class="muted">이 지점에서 필지를 찾지 못해 조회하지 않았습니다.</p>`;
++    results.innerHTML =
++      colShell("col-sales", "거래내역", "", none) +
++      colShell("col-index", "지가변동률", "", none) +
++      colShell("col-summary", "판단 요약", "", addrBlock() +
++        `<p class="muted">이 지점에서 필지를 찾지 못했습니다. 건물·도로·하천 위이거나 아직 데이터가 없는 지역일 수 있습니다.</p>`);
++    salesLayer.clearLayers();
++    refreshOverlays();
++    return;
+   }
+ 
++  R.parcel = parcelData;
++  R.sgg = (parcelData.bcode || "").slice(0, 5);
++  R.umd = lastToken(parcelData.address_name || "");
++  results.innerHTML = colSales() + colIndex() + colSummary();
++  renderSummary();
++  wireDeep(my);
++
++  // 2) 감정평가 필드들을 병렬 조회.
++  const pnu = parcelData.pnu;
++  const [price, landUse, features] = await Promise.allSettled([
++    api("/appraisal/official-price", { pnu }),
++    api("/appraisal/land-use", { pnu }),
++    api("/appraisal/land-features", { pnu }),
++  ]);
++  if (my !== queryId) return;
++  R.price = price.status === "fulfilled" ? price.value : null;
++  R.regionOnRequest = regionNotLoaded(price);
++  R.done.price = true;
++  R.zones = landUse.status === "fulfilled" ? landUse.value.zones || [] : [];
++  R.features = features.status === "fulfilled" ? features.value : null;
++
++  const facts = document.getElementById("facts");
++  if (facts) {
++    facts.innerHTML = renderPrice(price) + renderLandUse(landUse) + renderFeatures(features) + renderParcelCard(parcelData);
++  }
++  // 대표 용도지역이 정해진 뒤에 지가변동률을 한 번만 부른다. 기본값(주거지역)과 실제
++  // 용도지역을 동시에 부르면 늦게 온 응답이 이겨 다른 분류 값이 표시된다(QA MED-1).
++  const ziClass = document.getElementById("ziClass");
++  if (ziClass) {
++    ziClass.value = zoneClassOf(mainZone(R.zones));
++    loadPriceIndex(R.sgg, ziClass.value, my);
++  }
++  renderSummary();
+   refreshOverlays();
+ }
+ 
+ async function searchAddress(q) {
+   if (!q || q.length < 5) return;
+-  results.innerHTML = `<div class="loading"><span class="spin"></span>주소 검색 중…</div>`;
++  enterReportLayout();
++  results.innerHTML = colShell("col-summary", "판단 요약", "", `<div class="loading">${SPIN}주소 검색 중…</div>`);
+   try {
+     const r = await api("/geocode", { q });
+     if (r.match === "ambiguous") {
+-      results.innerHTML =
+-        `<div class="card"><header>검색 결과</header><div class="body">` +
++      results.innerHTML = colShell("col-summary", "검색 결과", "",
+         `<div class="muted">여러 후보가 있습니다. 더 구체적으로 입력하세요.</div>` +
+-        (r.candidates || []).map((c) => `<div class="poi-item"><span class="pname">${esc(c)}</span></div>`).join("") +
+-        `</div></div>`;
++        (r.candidates || []).map((c) => `<div class="poi-item"><span class="pname">${esc(c)}</span></div>`).join(""));
+       return;
+     }
+     if (!r.point) throw new Error("좌표를 찾지 못했습니다");
+     const [lon, lat] = r.point;
+     await queryPoint(lat, lon);
+   } catch (e) {
+-    results.innerHTML = `<div class="card"><div class="body err-line">검색 실패: ${esc(errText(e))}</div></div>`;
++    results.innerHTML = colShell("col-summary", "판단 요약", "", `<div class="err-line">검색 실패: ${esc(errText(e))}</div>`);
+   }
+ }
+ 
+-// ---------- 렌더러 ----------
+-function renderAddress(rev, parcel) {
++// 결과가 생기면 4열 리포트 배치로 바꾼다. 그리드가 바뀌므로 Leaflet에 크기 변경을 알린다.
++function enterReportLayout() {
++  if (app.classList.contains("has-report")) return;
++  app.classList.add("has-report");
++  setTimeout(() => { map.invalidateSize(); if (photoMap) photoMap.invalidateSize(); }, 60);
++}
++
++// ---------- 열(column) 골격 ----------
++function colShell(cls, title, sub, body) {
++  return `<div class="col ${cls}"><div class="col-title">${title}${sub ? ` <small>${sub}</small>` : ""}</div>${body}</div>`;
++}
++
++function colSales() {
++  return colShell("col-sales", "거래내역", `주변 지역 · 최근 ${SALES_MONTHS}개월 · 시간순`,
++    `<div class="seg filter no-print" role="group" aria-label="거래 범위">
++       <button type="button" class="seg-btn on" data-filter="all">주변 전체</button>
++       <button type="button" class="seg-btn" data-filter="same">같은 동만</button>
++     </div>
++     <div id="salesOut">${SPIN}최근 거래를 모으는 중…</div>
++     <p class="note">국토교통부 실거래 공개 자료는 지번 일부가 비공개입니다. 지도에는 법정동 단위로 표시하고, 거래를 누르면 지도가 그 동으로 이동합니다.
++       거래 신고 기한이 계약 후 30일이라 가장 최근 달은 아직 덜 집계됐을 수 있습니다.</p>`);
++}
++
++// 지가변동률(R-ONE) 원자료의 용도지역 분류 9종. 운영 데이터에서 값이 있는 분류만 둔다.
++const ZONE_CLASSES = ["주거지역", "상업지역", "공업지역", "녹지지역", "계획관리지역", "생산관리지역",
++  "보전관리지역", "관리(통합)지역", "농림지역", "자연환경보전지역"];
++const RANGES = [["1년", 12], ["3년", 36], ["5년", 60], ["전체", 0]];
++let ziSeries = [];
++let ziRange = 36;
++
++function colIndex() {
++  const zopts = ZONE_CLASSES.map((z) => `<option value="${z}">${z}</option>`).join("");
++  return colShell("col-index", "지가변동률", "월별 · 전월 대비 %",
++    `<div class="deep-ctl no-print">
++       <select id="ziClass" aria-label="용도지역">${zopts}</select>
++       <button type="button" class="btn ghost sm no-print" id="ziExpand">크게 보기</button>
++     </div>
++     <div class="deep-ctl no-print"><div class="seg" role="group" aria-label="기간">${segButtons()}</div></div>
++     <div class="range-label" id="ziRangeLabel">&nbsp;</div>
++     <div id="ziOut" class="chart-box">${SPIN}</div>
++     <div id="ziTable"></div>`);
++}
++
++function segButtons() {
++  return RANGES.map(([l, n]) => `<button type="button" class="seg-btn${n === ziRange ? " on" : ""}" data-range="${n}">${l}</button>`).join("");
++}
++
++function colSummary() {
++  return colShell("col-summary", "판단 요약", "공공데이터 사실 기반",
++    addrBlock() +
++    `<div id="summary"></div>
++     <div id="facts"><div class="loading">${SPIN}</div></div>
++     <p class="unit-note">면적은 ㎡(헤베)와 평을 함께 표시합니다. 1평 = 3.3058㎡</p>
++     ${disclaimerHTML()}
++     <div class="print-box no-print">
++       <button class="btn" id="printBtn" type="button">보고서 자동 작성 · 다운로드</button>
++       <small>A4 · 인쇄 창에서 "PDF로 저장" 선택</small>
++     </div>`);
++}
++
++function addrBlock() {
++  const a = R && R.address ? R.address : { road: "주소 미상", sub: "" };
++  const pnu = R && R.parcel ? `<div class="pnu">PNU ${esc(R.parcel.pnu)}</div>` : "";
++  return `<div class="addr-block"><div class="addr-line">${esc(a.road)}</div><div class="addr-sub">${esc(a.sub)}</div>${pnu}</div>`;
++}
++
++function disclaimerHTML() {
++  return `<p class="disclaimer">이 화면과 리포트는 국토교통부·한국부동산원·국가공간정보 공공데이터를 모아 보여주는 참고 자료입니다.
++    감정평가(감정평가법에 따른 가격 판단)가 아니며, 공식 확인은 각 기관의 원본 자료로 하시기 바랍니다.</p>`;
++}
++
++function renderPrintHead() {
++  const el = document.getElementById("printHead");
++  if (!el) return;
++  const d = new Date();
++  const ds = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
++  el.innerHTML = `<div class="ph-title">올맵 토지 정보 보고서</div>
++    <div class="ph-meta">${esc(R && R.address ? R.address.road : "")} · 출력일 ${ds}</div>`;
++}
++
++// ---------- 세부 카드 (판단 요약 열) ----------
++function addressOf(rev, parcel) {
+   const road =
+     (rev.status === "fulfilled" && rev.value.road_address) ||
+     (parcel.status === "fulfilled" && parcel.value.address_name) ||
+@@ -105,14 +230,11 @@ function renderAddress(rev, parcel) {
+     (parcel.status === "fulfilled" &&
+       `${parcel.value.address_name || ""} ${parcel.value.jibun || ""}`) ||
+     "";
+-  return `<div class="card"><header>위치</header><div class="body">
+-    <div class="addr-line">${esc(road)}</div>
+-    <div class="addr-sub">${esc(sub.trim())}</div>
+-  </div></div>`;
++  return { road, sub: sub.trim() };
+ }
+ 
+ function renderParcelCard(p) {
+-  return `<div class="card"><header>필지 <span class="tag mono">${esc(p.pnu)}</span></header><div class="body">
++  return `<div class="card"><header>필지</header><div class="body">
+     <dl class="kv">
+       <dt>지번</dt><dd>${esc(p.jibun || "-")}</dd>
+       <dt>지목</dt><dd>${esc(p.land_category || "-")}</dd>
+@@ -122,20 +244,43 @@ function renderParcelCard(p) {
+   </div></div>`;
+ }
+ 
++function priceTypeLabel(p) {
++  // STANDARD는 이 필지 자체가 표준지라는 뜻이다(서버가 standard_lots에서 pnu로 찾음). 추정값 아님.
++  if (p.price_type === "STANDARD") return "표준지공시지가";
++  if (p.price_type === "INDIVIDUAL") return "개별공시지가";
++  return "공시지가"; // 모르는 값은 원문을 내보내지 않는다(innerHTML로 들어가는 자리)
++}
++
++// 개별공시지가·토지특성은 시도 단위로 골라 적재한다(Phase 7 선택 적재). 아직 적재하지 않은 시도면
++// 서버가 422 REGION_NOT_LOADED를 준다. 이 경우 "자료 없음"이 아니라 요청 시 제공으로 안내한다.
++const CONTACT_MAIL = "info@birth2death.com";
++function regionNotLoaded(settled) {
++  const e = settled.status === "rejected" ? settled.reason : null;
++  return !!(e && e.body && e.body.error && e.body.error.code === "REGION_NOT_LOADED");
++}
++function onRequestCard(title, josa) {
++  return `<div class="card"><header>${esc(title)}</header><div class="body muted">
++    이 지역의 ${esc(title)}${josa} 요청하시면 제공합니다.
++    <a href="mailto:${CONTACT_MAIL}?subject=${encodeURIComponent("올맵 지역 자료 요청")}">문의하기</a>
++  </div></div>`;
++}
++
+ function renderPrice(price) {
+-  if (price.status !== "fulfilled") return card404("공시지가", "해당 지역 미적재");
++  if (regionNotLoaded(price)) return onRequestCard("공시지가", "는");
++  if (price.status !== "fulfilled") return card404("공시지가", "이 필지의 공시지가 자료가 없습니다");
+   const p = price.value;
+-  const typeLabel = p.price_type === "INDIVIDUAL" ? "개별공시지가" : "표준지 기준 추정";
+-  return `<div class="card"><header>공시지가 <span class="tag">${p.base_year}년</span></header><div class="body">
++  return `<div class="card"><header>공시지가 <span class="tag">${esc(p.base_year)}년</span></header><div class="body">
+     <div class="price">${formatWon(p.price_per_sqm)}<span class="unit">원/㎡</span></div>
+-    <div class="price-type">${typeLabel}</div>
++    <div class="price-sub">평당 약 ${fmtManwonNum(perPyeongManwon(p.price_per_sqm))}</div>
++    <div class="price-type">${priceTypeLabel(p)}</div>
+   </div></div>`;
+ }
+ 
+ function renderFeatures(f) {
++  if (regionNotLoaded(f)) return onRequestCard("토지특성", "은");
+   if (f.status !== "fulfilled") return "";
+   const v = f.value;
+-  return `<div class="card"><header>토지특성 <span class="tag">${v.base_year || ""}</span></header><div class="body">
++  return `<div class="card"><header>토지특성 <span class="tag">${esc(v.base_year || "")}</span></header><div class="body">
+     <dl class="kv">
+       <dt>이용상황</dt><dd>${esc(v.land_use || "-")}</dd>
+       <dt>지형고저</dt><dd>${esc(v.terrain_height || "-")}</dd>
+@@ -147,7 +292,9 @@ function renderFeatures(f) {
+ 
+ function renderLandUse(lu) {
+   if (lu.status !== "fulfilled" || !lu.value.zones || !lu.value.zones.length) return "";
+-  const zones = lu.value.zones;
++  // 용도지역을 맨 앞으로(나머지는 원자료 순서 유지). 6개만 보이므로 핵심 값이 "외 N개"에 묻히지 않게 한다.
++  const zones = lu.value.zones.slice().sort((a, b) =>
++    USE_ZONE_RE.test(b.zone_name || "") - USE_ZONE_RE.test(a.zone_name || ""));
+   const shown = zones.slice(0, 6);
+   const rows = shown
+     .map(
+@@ -168,99 +315,526 @@ function card404(title, msg) {
+   return `<div class="card"><header>${esc(title)}</header><div class="body muted">${esc(msg)}</div></div>`;
+ }
+ 
+-// ---------- 심화 데이터: 실거래 + 지가변동률 ----------
+-const ZONE_CLASSES = ["주거지역", "상업지역", "공업지역", "녹지지역"];
++// ---------- 판단 요약 (타일 + 문장) ----------
++// 대표 용도지역: 국토계획법 용도지역 이름과 정확히 맞는 항목만 고른다("포함" 우선).
++// 원자료에는 "공장설립제한지역", "도시지역"처럼 이름이 "지역"으로 끝나는 다른 지역·구역이
++// 함께 오므로, 끝말만 보면 엉뚱한 값을 고른다(2026-10-24 운영 데이터에서 확인).
++const USE_ZONE_RE = /^(제[12]종전용주거|제[123]종일반주거|준주거|주거|중심상업|일반상업|근린상업|유통상업|상업|전용공업|일반공업|준공업|공업|보전녹지|생산녹지|자연녹지|녹지|보전관리|생산관리|계획관리|관리|농림|자연환경보전)지역$/;
++function mainZone(zones) {
++  const z = zones.find((x) => x.relation === "포함" && USE_ZONE_RE.test(x.zone_name || "")) ||
++            zones.find((x) => USE_ZONE_RE.test(x.zone_name || ""));
++  return z ? z.zone_name : "";
++}
+ 
+-function renderDeep(p) {
+-  const sgg = (p.bcode || "").slice(0, 5);
+-  if (sgg.length !== 5) return "";
+-  const zopts = ZONE_CLASSES.map((z) => `<option value="${z}">${z}</option>`).join("");
+-  return `<div class="card"><header>실거래 <span class="tag mono">시군구 ${esc(sgg)}</span></header><div class="body">
+-      <div class="deep-ctl">
+-        <input id="salesYm" value="202401" maxlength="6" size="6" inputmode="numeric" aria-label="거래월 YYYYMM">
+-        <button class="btn" id="salesGo">조회</button>
+-      </div>
+-      <div id="salesOut" class="muted">거래월(YYYYMM)을 입력하고 조회하세요.</div>
+-    </div></div>
+-    <div class="card"><header>지가변동률 <span class="tag mono">${esc(sgg)}</span></header><div class="body">
+-      <div class="deep-ctl">
+-        <select id="ziClass" aria-label="용도지역">${zopts}</select>
+-        <span class="muted">월별 변동률(%)</span>
+-      </div>
+-      <div id="ziOut" class="muted"><span class="spin"></span></div>
+-    </div></div>`;
+-}
+-
+-function wireDeep(p) {
+-  const sgg = (p.bcode || "").slice(0, 5);
+-  if (sgg.length !== 5) return;
+-  const salesGo = document.getElementById("salesGo");
+-  if (salesGo) salesGo.addEventListener("click", () => loadSales(sgg));
++function zoneClassOf(zoneName) {
++  for (const c of ["계획관리", "생산관리", "보전관리", "농림", "자연환경보전"]) {
++    if (zoneName.startsWith(c)) return c + "지역";
++  }
++  if (zoneName === "관리지역") return "관리(통합)지역"; // 세분 안 된 관리지역. R-ONE은 이 이름으로 따로 낸다
++  if (/주거/.test(zoneName)) return "주거지역";
++  if (/상업/.test(zoneName)) return "상업지역";
++  if (/공업/.test(zoneName)) return "공업지역";
++  if (/녹지/.test(zoneName)) return "녹지지역";
++  return "주거지역"; // 용도지역을 못 찾으면 기본값. 화면의 분류 선택과 범위 라벨에 그대로 드러난다.
++}
++
++function tile(label, value, sub, cls = "") {
++  return `<div class="tile ${cls}"><div class="t-label">${label}</div><div class="t-value">${value}</div><div class="t-sub">${sub}</div></div>`;
++}
++
++function sameSales() {
++  return R && R.sales ? R.sales.items.filter((x) => x.same) : [];
++}
++
++function renderSummary() {
++  const el = document.getElementById("summary");
++  if (!el || !R || !R.parcel) return;
++
++  const zoneName = mainZone(R.zones);
++  const cat = R.parcel.land_category || "";
++  const landUse = R.features && R.features.land_use ? R.features.land_use : "";
++
++  let priceTile;
++  if (!R.done.price) priceTile = tile("공시지가", SPIN, "&nbsp;");
++  else if (!R.price && R.regionOnRequest) priceTile = tile("공시지가", "요청 시 제공", "이 지역은 문의 후 제공", "gold");
++  else if (!R.price) priceTile = tile("공시지가", "-", "데이터 없음");
++  else priceTile = tile("공시지가", `${formatWon(R.price.price_per_sqm)}<small>원/㎡</small>`,
++    `평당 약 ${fmtManwonNum(perPyeongManwon(R.price.price_per_sqm))} · ${esc(R.price.base_year)}년`, "gold");
++
++  let salesTile;
++  if (!R.done.sales) salesTile = tile("같은 동 최근 거래", SPIN, "&nbsp;", "wide");
++  else if (!R.sales) salesTile = tile("같은 동 최근 거래", "-", "조회 실패", "wide");
++  else {
++    const same = sameSales();
++    const med = median(same.filter((x) => !x.share).map((x) => x.perPy));
++    salesTile = tile(`${esc(R.umd || "같은 동")} ${SALES_MONTHS}개월 거래`, `${same.length}<small>건</small>`,
++      same.length ? (isFinite(med) ? `평당 중위 ${fmtManwonNum(med)} (지목 구분 없음, 지분거래 제외)` : "모두 지분거래라 평당가 미산출") : `주변 전체 ${R.sales.items.length}건`, "wide");
++  }
++
++  let idxTile;
++  if (!R.done.index) idxTile = tile("지가변동률", SPIN, "&nbsp;");
++  else if (!R.index) idxTile = tile("지가변동률", "-", "데이터 없음");
++  else {
++    const v = R.index.last.rate_pct;
++    idxTile = tile("지가변동률 (월)", `${v > 0 ? "+" : ""}${v}<small>%</small>`,
++      `${esc(fmtMonth(R.index.last.month))} · ${esc(R.index.cls)}`, v >= 0 ? "up" : "down");
++  }
++
++  const zoneTile = tile("용도지역", zoneName ? esc(zoneName) : (R.done.price ? "-" : SPIN),
++    `지목 ${esc(cat || "-")}${landUse ? " · " + esc(landUse) : ""}`, "wide");
++
++  // 좁은 열에서도 긴 용도지역명이 잘리지 않도록 용도지역·거래 칸은 가로 전체를 쓴다.
++  el.innerHTML = `<div class="tiles">${zoneTile}${priceTile}${idxTile}${salesTile}</div>
++    <p class="summary-text">${summarySentences(zoneName, cat)}</p>`;
++}
++
++// 사실만 이어 붙인 요약 문장. 평가·전망 표현 금지.
++function summarySentences(zoneName, cat) {
++  const out = [];
++  out.push(`${zoneName ? esc(zoneName) + "에 속한 " : ""}지목 ${esc(cat || "미상")} 토지입니다.`);
++  if (!R.price && R.regionOnRequest) out.push("이 지역의 개별공시지가와 토지특성은 요청하시면 제공합니다.");
++  if (R.price) {
++    out.push(`${esc(R.price.base_year)}년 공시지가는 ㎡당 ${formatWon(R.price.price_per_sqm)}원(평당 약 ${fmtManwonNum(perPyeongManwon(R.price.price_per_sqm))})이며 ${priceTypeLabel(R.price)} 값입니다.`);
++  }
++  if (R.sales) {
++    const same = sameSales();
++    const med = median(same.filter((x) => !x.share).map((x) => x.perPy));
++    if (same.length) {
++      out.push(`같은 동(${esc(R.umd)})에서 최근 ${SALES_MONTHS}개월간 토지 거래 ${same.length}건이 신고됐고` +
++        (isFinite(med) ? `, 평당 거래가 중위값(지목 구분 없음, 지분거래 제외)은 약 ${fmtManwonNum(med)}입니다.` : ", 모두 지분거래라 평당가는 내지 않았습니다."));
++    } else {
++      out.push(`같은 동(${esc(R.umd)})의 최근 ${SALES_MONTHS}개월 토지 거래 신고는 없고, 주변(같은 시군구) 전체로는 ${R.sales.items.length}건입니다.`);
++    }
++  }
++  if (R.index) {
++    const v = R.index.last.rate_pct;
++    out.push(`${esc(sggName())} ${esc(R.index.cls)} 지가는 ${esc(fmtMonth(R.index.last.month))} 기준 전월 대비 ${v > 0 ? "+" : ""}${v}% 변동했습니다.`);
++  }
++  return out.join(" ");
++}
++
++// ---------- 거래내역 열 ----------
++function wireDeep(my) {
++  loadSalesRecent(R.sgg, my);
+   const ziClass = document.getElementById("ziClass");
+   if (ziClass) {
+-    ziClass.addEventListener("change", () => loadPriceIndex(sgg, ziClass.value));
+-    loadPriceIndex(sgg, ziClass.value); // 최초 자동 로드
++    ziClass.addEventListener("change", () => loadPriceIndex(R.sgg, ziClass.value, queryId));
+   }
++  document.querySelectorAll(".col-index .seg-btn").forEach((b) =>
++    b.addEventListener("click", () => setRange(Number(b.dataset.range)))
++  );
++  document.querySelectorAll(".col-sales .seg-btn").forEach((b) =>
++    b.addEventListener("click", () => {
++      salesFilter = b.dataset.filter;
++      document.querySelectorAll(".col-sales .seg-btn").forEach((x) => x.classList.toggle("on", x === b));
++      renderSalesList();
++    })
++  );
++  const ex = document.getElementById("ziExpand");
++  if (ex) ex.addEventListener("click", openChartModal);
+ }
+ 
+-async function loadSales(sgg) {
+-  const ym = (document.getElementById("salesYm").value || "").trim();
++function isSameUmd(umdNm) {
++  if (!R || !R.parcel || !umdNm) return false;
++  const full = R.parcel.address_name || "";
++  return full === umdNm || full.endsWith(" " + umdNm);
++}
++
++function normSale(it) {
++  const amount = num(it.deal_amount_manwon);
++  const area = num(it.deal_area_m2);
++  const py = area > 0 ? area / SQM_PER_PYEONG : NaN;
++  const ym = `${it.deal_year || ""}${String(it.deal_month || "").padStart(2, "0")}`;
++  return {
++    raw: it,
++    umd: it.umd_nm || "",
++    amount, area,
++    perPy: isFinite(py) && py > 0 ? amount / py : NaN,
++    share: /지분/.test(it.share_dealing_type || ""),
++    ym,
++    date: `${it.deal_year || ""}.${String(it.deal_month || "").padStart(2, "0")}.${String(it.deal_day || "").padStart(2, "0")}`,
++    sortKey: Number(`${ym}${String(it.deal_day || 0).padStart(2, "0")}`) || 0,
++    same: isSameUmd(it.umd_nm),
++  };
++}
++
++let salesFilter = "all";
++
++async function loadSalesRecent(sgg, my) {
+   const box = document.getElementById("salesOut");
+-  if (!/^\d{6}$/.test(ym)) { box.innerHTML = `<span class="err-line">YYYYMM 형식으로 입력하세요.</span>`; return; }
+-  box.innerHTML = `<span class="spin"></span>조회 중…`;
++  salesFilter = "all";
+   try {
+-    const r = await api("/appraisal/sales", { lawd_cd: sgg, deal_ymd: ym });
+-    const items = r.items || [];
+-    if (!items.length) { box.innerHTML = `<span class="muted">${ym}에 조회된 실거래가 없습니다.</span>`; return; }
+-    const rows = items.slice(0, 8).map((it) =>
+-      `<div class="sales-row">
+-        <span class="amt">${formatManwon(it.deal_amount_manwon)}</span>
+-        <span>${esc(it.jimok || "")} ${esc(it.deal_area_m2 || "")}㎡</span>
+-        <span class="meta">${esc(it.umd_nm || "")} · ${it.deal_month}/${it.deal_day}</span>
+-      </div>`).join("");
+-    const more = items.length > 8 ? `<div class="zone-more">외 ${items.length - 8}건</div>` : "";
+-    box.innerHTML = `<div class="muted" style="margin-bottom:6px">${items.length}건</div>${rows}${more}`;
++    const r = await api("/appraisal/sales/recent", { lawd_cd: sgg, months: SALES_MONTHS });
++    if (my !== queryId) return;
++    // 시간순(최신 먼저). 같은 날이면 같은 동을 위로.
++    const items = (r.items || []).map(normSale)
++      .sort((a, b) => (b.sortKey - a.sortKey) || (b.same - a.same));
++    R.sales = { items, months: r.months || [], failed: r.failed_months || [],
++                truncated: r.truncated_months || [], points: r.umd_points || [] };
+   } catch (e) {
+-    box.innerHTML = `<span class="err-line">${esc(errText(e))}</span>`;
++    if (my !== queryId) return;
++    R.sales = null;
++    const msg = e.status === 503 ? "실거래 조회가 지금은 꺼져 있습니다. 잠시 후 다시 시도해 주세요."
++      : e.status === 404 ? "이 지역 코드로는 실거래를 조회할 수 없습니다."
++      : errText(e);
++    if (box) box.innerHTML = `<span class="err-line">${esc(msg)}</span>`;
+   }
++  R.done.sales = true;
++  if (R.sales) renderSalesList();
++  drawSalesMarkers();
++  renderSummary();
++}
++
++function saleRow(x) {
++  const r = x.raw;
++  return `<div class="sale${x.same ? " same" : ""}" data-umd="${esc(x.umd)}" role="button" tabindex="0">
++    <div class="sale-main"><span class="amt">${formatManwon(r.deal_amount_manwon)}</span>
++      <span class="ppy">${isFinite(x.perPy) ? "평당 " + fmtManwonNum(x.perPy) : ""}</span>
++      <span class="sale-date">${esc(x.date)}</span></div>
++    <div class="sale-sub">${x.same ? '<span class="badge same">같은 동</span> ' : ""}${esc(x.umd)} ${esc(r.jibun_masked || "")} · 지목 ${esc(r.jimok || "-")} · 면적 ${fmtArea(x.area)}${x.share ? ' · <span class="badge">지분거래</span>' : ""}</div>
++  </div>`;
++}
++
++function renderSalesList() {
++  const box = document.getElementById("salesOut");
++  if (!box || !R.sales) return;
++  const { items, months, failed } = R.sales;
++  const monthsTxt = months.map(fmtMonth).join(", ");
++  if (!items.length) {
++    box.innerHTML = `<span class="muted">최근 ${SALES_MONTHS}개월(${esc(monthsTxt)}) 같은 시군구 안 토지 거래 신고가 없습니다.</span>`;
++    return;
++  }
++  const same = items.filter((x) => x.same);
++  const med = median(same.filter((x) => !x.share).map((x) => x.perPy));
++  const rows = salesFilter === "same" ? same : items;
++  const stat = `<div class="sales-stat">
++      <span><b>${esc(R.umd || "같은 동")}</b> ${same.length}건${isFinite(med) ? ` · 평당 중위 ${fmtManwonNum(med)}` : ""}</span>
++      <span class="muted">주변(같은 시군구) 전체 ${items.length}건 · ${esc(monthsTxt)}</span>
++    </div>`;
++  const warn = (failed.length ? `<div class="muted">일부 월(${esc(failed.map(fmtMonth).join(", "))})은 공공데이터 응답이 없어 빠졌습니다.</div>` : "") +
++    (R.sales.truncated.length ? `<div class="muted">${esc(R.sales.truncated.map(fmtMonth).join(", "))}은 거래가 많아 앞쪽 1,000건만 표시합니다.</div>` : "");
++  let list = "";
++  let cur = "";
++  rows.forEach((x) => {
++    if (x.ym !== cur) {
++      cur = x.ym;
++      const n = rows.filter((y) => y.ym === cur).length;
++      list += `<div class="month-head"><span>${esc(fmtMonth(cur))}</span><span>${n}건</span></div>`;
++    }
++    list += saleRow(x);
++  });
++  if (!rows.length) list = `<p class="muted">같은 동 거래가 없습니다.</p>`;
++  box.innerHTML = stat + warn + list;
++  box.querySelectorAll(".sale").forEach((el) => {
++    const go = () => focusUmd(el.dataset.umd);
++    el.addEventListener("click", go);
++    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
++  });
++}
++
++function focusUmd(umd) {
++  const m = salesMarkers.get(umd);
++  if (!m) return;
++  map.setView(m.getLatLng(), Math.max(map.getZoom(), 15));
++  m.openPopup();
+ }
+ 
+-async function loadPriceIndex(sgg, cls) {
++// 법정동 중심점 마커(건수 배지). 지번이 비공개라 필지 단위로는 찍지 않는다.
++function drawSalesMarkers() {
++  salesLayer.clearLayers();
++  salesMarkers = new Map();
++  if (!R || !R.sales || !document.getElementById("salesToggle").checked) return;
++  const groups = new Map();
++  R.sales.items.forEach((x) => {
++    if (!groups.has(x.umd)) groups.set(x.umd, []);
++    groups.get(x.umd).push(x);
++  });
++  groups.forEach((rows, umd) => {
++    const pt = R.sales.points.find((p) => p.name === umd || p.name.endsWith(" " + umd));
++    if (!pt) return;
++    const same = rows[0].same;
++    const icon = L.divIcon({
++      className: "umd-pin-wrap",
++      html: `<div class="umd-pin${same ? " same" : ""}"><b>${rows.length}</b>건</div>`,
++      iconSize: null,
++    });
++    const list = rows.slice(0, 5).map((x) =>
++      `<div class="pop-row"><b>${formatManwon(x.raw.deal_amount_manwon)}</b> ${fmtArea(x.area)}<br><span class="muted">${esc(x.raw.jimok || "")} · ${esc(x.date)}</span></div>`
++    ).join("");
++    const mk = L.marker([pt.lat, pt.lng], { icon, keyboard: true, title: `${umd} 거래 ${rows.length}건` })
++      .bindPopup(`<b>${esc(umd)}</b> 최근 ${SALES_MONTHS}개월 ${rows.length}건${list}` +
++        (rows.length > 5 ? `<div class="muted">외 ${rows.length - 5}건은 거래내역 열에서 확인</div>` : "") +
++        `<div class="muted" style="margin-top:4px">위치는 동 대표 지점입니다 (지번 비공개).</div>`)
++      .addTo(salesLayer);
++    salesMarkers.set(umd, mk);
++  });
++}
++
++// ---------- 지가변동률 열 ----------
++// 지가변동률 요청 순번. 같은 조회 안에서 용도지역을 빠르게 바꿔도 마지막 요청만 반영한다.
++let ziSeq = 0;
++
++async function loadPriceIndex(sgg, cls, my) {
++  const seq = ++ziSeq;
+   const box = document.getElementById("ziOut");
+-  box.innerHTML = `<span class="spin"></span>`;
++  if (box) box.innerHTML = SPIN;
+   try {
+     const r = await api("/appraisal/price-index", { sigungu: sgg, use_zone_class: cls });
+-    const series = (r.series || []).filter((s) => s.rate_pct != null);
+-    if (!series.length) { box.innerHTML = `<span class="muted">해당 용도지역 데이터가 없습니다.</span>`; return; }
+-    box.innerHTML = sparkline(series);
++    if (my !== queryId || seq !== ziSeq) return;
++    // 변동률은 숫자로 고정해 둔다: 차트 계산이 안전해지고, 화면에 넣을 때 문자열이 섞일 일이 없다.
++    ziSeries = (r.series || [])
++      .filter((s) => s.rate_pct != null)
++      .map((s) => ({ month: s.month, rate_pct: Number(s.rate_pct) }))
++      .filter((s) => isFinite(s.rate_pct));
++    R.index = ziSeries.length ? { cls, last: ziSeries[ziSeries.length - 1] } : null;
++    if (!ziSeries.length) {
++      if (box) box.innerHTML = `<span class="muted">해당 용도지역 데이터가 없습니다.</span>`;
++      document.getElementById("ziRangeLabel").innerHTML = "&nbsp;";
++      document.getElementById("ziTable").innerHTML = "";
++    } else drawZi();
+   } catch (e) {
+-    box.innerHTML = `<span class="err-line">${esc(errText(e))}</span>`;
++    if (my !== queryId || seq !== ziSeq) return;
++    R.index = null;
++    if (box) box.innerHTML = `<span class="err-line">${esc(errText(e))}</span>`;
+   }
++  R.done.index = true;
++  renderSummary();
++}
++
++function setRange(n) {
++  ziRange = n;
++  document.querySelectorAll(".seg-btn[data-range]").forEach((x) => x.classList.toggle("on", Number(x.dataset.range) === n));
++  drawZi();
++  const mc = document.getElementById("modalChart");
++  if (mc) mountChart(mc, rangeSlice(ziSeries, ziRange), 960, 380);
++}
++
++function rangeSlice(series, n) {
++  return n > 0 ? series.slice(-n) : series;
++}
++
++// 범위 명시: 표시 중인 기간을 숫자로 적는다 (화이트보드 3번 "범위 명시").
++function rangeText(s) {
++  if (!s.length) return "";
++  const cls = (R && R.index && R.index.cls) || "";
++  return `표시 범위 <b>${esc(fmtMonth(s[0].month))} ~ ${esc(fmtMonth(s[s.length - 1].month))}</b> · ${s.length}개월 · ${esc(sggName())} ${esc(cls)}`;
++}
++
++function drawZi() {
++  const box = document.getElementById("ziOut");
++  if (!box || !ziSeries.length) return;
++  const s = rangeSlice(ziSeries, ziRange);
++  document.getElementById("ziRangeLabel").innerHTML = rangeText(s);
++  mountChart(box, s, 320, 270);
++  const rows = s.slice().reverse().map((x) => {
++    const v = x.rate_pct;
++    return `<tr><td>${esc(fmtMonth(x.month))}</td><td class="${v >= 0 ? "up" : "down"}">${v > 0 ? "+" : ""}${v}%</td></tr>`;
++  }).join("");
++  document.getElementById("ziTable").innerHTML =
++    `<table class="zi-table"><thead><tr><th>월</th><th>전월 대비 변동률</th></tr></thead><tbody>${rows}</tbody></table>`;
++}
++
++// ---------- 의존성 없는 인터랙티브 SVG 라인 차트 ----------
++// x축 = 월, y축 = 변동률(%), 축 제목과 0선을 표시하고, 마우스/터치를 올리면 해당 월 값을 보여준다.
++function niceStep(raw) {
++  const p = Math.pow(10, Math.floor(Math.log10(raw)));
++  const f = raw / p;
++  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+ }
+ 
+-// 의존성 없는 SVG 스파크라인(월별 변동률%). 0선 기준 area+line.
+-function sparkline(series) {
+-  const W = 320, H = 56, pad = 4;
++function lineChartSVG(series, W, H) {
++  const m = { l: 50, r: 14, t: 22, b: 40 };
+   const vals = series.map((s) => s.rate_pct);
+-  const min = Math.min(0, ...vals), max = Math.max(0, ...vals);
+-  const span = max - min || 1;
+-  const x = (i) => pad + (i * (W - 2 * pad)) / Math.max(1, series.length - 1);
+-  const y = (v) => H - pad - ((v - min) / span) * (H - 2 * pad);
++  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
++  if (hi === lo) { hi += 0.1; lo -= 0.1; }
++  const step = niceStep((hi - lo) / 4);
++  lo = Math.floor(lo / step) * step;
++  hi = Math.ceil(hi / step) * step;
++  const n = series.length;
++  const x = (i) => m.l + (i * (W - m.l - m.r)) / Math.max(1, n - 1);
++  const y = (v) => m.t + ((hi - v) / (hi - lo)) * (H - m.t - m.b);
++  const dec = step < 0.1 ? 2 : step < 1 ? 1 : 0;
++
++  let grid = "";
++  for (let t = lo; t <= hi + step / 2; t += step) {
++    const yy = y(t).toFixed(1);
++    const zero = Math.abs(t) < step / 1000;
++    grid += `<line class="g${zero ? " zero" : ""}" x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}"/>` +
++      `<text class="yl" x="${m.l - 6}" y="${yy}" dy="0.32em" text-anchor="end">${(zero ? 0 : t).toFixed(dec)}</text>`;
++  }
++  const ticks = n > 2 ? [0, Math.floor((n - 1) / 2), n - 1] : [...Array(n).keys()];
++  const xl = ticks.map((i) =>
++    `<text class="xl" x="${x(i).toFixed(1)}" y="${H - m.b + 16}" text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}">${esc(fmtMonth(series[i].month))}</text>`).join("");
++  const axes = `<text class="axt" x="2" y="12" text-anchor="start">Y: 변동률(%)</text>` +
++    `<text class="axt" x="${W - m.r}" y="${H - 4}" text-anchor="end">X: 월</text>`;
+   const pts = series.map((s, i) => `${x(i).toFixed(1)},${y(s.rate_pct).toFixed(1)}`);
+-  const area = `M${pts[0]} L${pts.join(" L")} L${x(series.length - 1).toFixed(1)},${y(min).toFixed(1)} L${x(0).toFixed(1)},${y(min).toFixed(1)} Z`;
+-  const last = series[series.length - 1];
+-  return `<div class="spark-wrap">
+-    <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="지가변동률 추이">
+-      <path class="ar" d="${area}"/>
+-      <polyline class="ln" points="${pts.join(" ")}"/>
+-      <circle class="dot" cx="${x(series.length - 1).toFixed(1)}" cy="${y(last.rate_pct).toFixed(1)}" r="2.5"/>
+-    </svg>
+-    <div class="spark-cap"><span>${esc(fmtMonth(series[0].month))}</span>
+-      <span>최근 ${last.rate_pct > 0 ? "+" : ""}${last.rate_pct}% (${esc(fmtMonth(last.month))})</span></div>
+-  </div>`;
++  const y0 = y(0).toFixed(1);
++  const area = `M${x(0).toFixed(1)},${y0} L${pts.join(" L")} L${x(n - 1).toFixed(1)},${y0} Z`;
++  const last = series[n - 1];
++  return `<svg class="lchart" viewBox="0 0 ${W} ${H}" role="img"
++      aria-label="지가변동률 추이, ${esc(fmtMonth(series[0].month))}부터 ${esc(fmtMonth(last.month))}까지, 최근 ${last.rate_pct}%">
++    ${grid}${xl}${axes}
++    <path class="ar" d="${area}"/>
++    <polyline class="ln" points="${pts.join(" ")}"/>
++    <circle class="dot" cx="${x(n - 1).toFixed(1)}" cy="${y(last.rate_pct).toFixed(1)}" r="3"/>
++    <line class="guide" x1="0" x2="0" y1="${m.t}" y2="${H - m.b}" visibility="hidden"/>
++    <circle class="hdot" r="4" cx="0" cy="0" visibility="hidden"/>
++    <rect class="hit" x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}"
++      data-ml="${m.l}" data-mr="${m.r}"/>
++  </svg>`;
++}
++
++function mountChart(box, series, W, H) {
++  box.innerHTML = lineChartSVG(series, W, H) + `<div class="ctip" hidden></div>`;
++  const svg = box.querySelector("svg");
++  const hit = svg.querySelector(".hit");
++  const guide = svg.querySelector(".guide");
++  const hdot = svg.querySelector(".hdot");
++  const tip = box.querySelector(".ctip");
++  const n = series.length;
++  const ml = Number(hit.dataset.ml), mr = Number(hit.dataset.mr);
++  const pts = svg.querySelector(".ln").getAttribute("points").split(" ").map((p) => p.split(",").map(Number));
++
++  function show(clientX) {
++    const rect = svg.getBoundingClientRect();
++    const vx = ((clientX - rect.left) / rect.width) * W;
++    const i = Math.max(0, Math.min(n - 1, Math.round(((vx - ml) / (W - ml - mr)) * (n - 1))));
++    const [px, py] = pts[i];
++    guide.setAttribute("x1", px); guide.setAttribute("x2", px); guide.setAttribute("visibility", "visible");
++    hdot.setAttribute("cx", px); hdot.setAttribute("cy", py); hdot.setAttribute("visibility", "visible");
++    const v = series[i].rate_pct;
++    tip.textContent = `${fmtMonth(series[i].month)}  ${v > 0 ? "+" : ""}${v}%`;
++    tip.hidden = false;
++    const leftPct = (px / W) * 100;
++    tip.style.left = `${leftPct}%`;
++    tip.style.transform = leftPct > 70 ? "translateX(-100%)" : leftPct < 30 ? "none" : "translateX(-50%)";
++  }
++  function hide() {
++    guide.setAttribute("visibility", "hidden");
++    hdot.setAttribute("visibility", "hidden");
++    tip.hidden = true;
++  }
++  hit.addEventListener("mousemove", (e) => show(e.clientX));
++  hit.addEventListener("mouseleave", hide);
++  hit.addEventListener("touchstart", (e) => show(e.touches[0].clientX), { passive: true });
++  hit.addEventListener("touchmove", (e) => show(e.touches[0].clientX), { passive: true });
+ }
++
++function openChartModal() {
++  if (!ziSeries.length) return;
++  const cls = (R && R.index && R.index.cls) || "";
++  const wrap = document.createElement("div");
++  wrap.className = "modal";
++  wrap.setAttribute("role", "dialog");
++  wrap.setAttribute("aria-modal", "true");
++  wrap.setAttribute("aria-label", "지가변동률 크게 보기");
++  wrap.innerHTML = `<div class="modal-card">
++      <div class="modal-head"><b>지가변동률</b><span class="muted">${esc(cls)} · 월별 · 전월 대비 %</span>
++        <div class="seg" role="group" aria-label="기간">${segButtons()}</div>
++        <button type="button" class="btn ghost sm" id="modalClose">닫기</button></div>
++      <div class="range-label" id="modalRange"></div>
++      <div class="chart-box" id="modalChart"></div>
++    </div>`;
++  document.body.appendChild(wrap);
++  const draw = () => {
++    const s = rangeSlice(ziSeries, ziRange);
++    document.getElementById("modalRange").innerHTML = rangeText(s);
++    mountChart(document.getElementById("modalChart"), s, 960, 380);
++  };
++  draw();
++  wrap.querySelectorAll(".seg-btn").forEach((b) =>
++    b.addEventListener("click", () => { setRange(Number(b.dataset.range)); draw(); })
++  );
++  const opener = document.activeElement;
++  const close = () => {
++    wrap.remove();
++    document.removeEventListener("keydown", onKey);
++    if (opener && opener.focus) opener.focus(); // 닫은 뒤 포커스를 "크게 보기" 버튼으로 되돌린다
++  };
++  const onKey = (e) => { if (e.key === "Escape") close(); };
++  document.addEventListener("keydown", onKey);
++  wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
++  document.getElementById("modalClose").addEventListener("click", close);
++  document.getElementById("modalClose").focus();
++}
++
+ function fmtMonth(m) { const s = String(m); return s.length === 6 ? `${s.slice(0, 4)}.${s.slice(4)}` : s; }
+ 
++// ---------- 해당 토지 사진 (항공사진) ----------
++// V-World 영상 타일만 쓴다(지시서 3.3 허용 출처). 거리뷰·로드뷰는 지시서 1.1(상용 지도
++// 자산 금지)에 따라 넣지 않는다. 키는 서버 env(B2D_VWORLD_KEY)에서 /config.json으로만 받는다.
++function vworldLayers(key) {
++  const k = encodeURIComponent(key);
++  const attribution = "항공사진 © 국토교통부 공간정보 오픈플랫폼(V-World)";
++  return [
++    L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${k}/Satellite/{z}/{y}/{x}.jpeg`, { minZoom: 6, maxZoom: 19, attribution }),
++    L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${k}/Hybrid/{z}/{y}/{x}.png`, { minZoom: 6, maxZoom: 19 }),
++  ];
++}
++
++async function updatePhoto(geometry, lat, lon) {
++  const cfg = await B2D_CONFIG;
++  const key = cfg && cfg.vworldKey;
++  const el = document.getElementById("photoMap");
++  const empty = document.getElementById("photoEmpty");
++  if (!key) { el.hidden = true; empty.hidden = false; return; }
++  el.hidden = false; empty.hidden = true;
++  if (!photoMap) {
++    photoMap = L.map("photoMap", { zoomControl: false, scrollWheelZoom: false });
++    vworldLayers(key).forEach((l) => l.addTo(photoMap));
++  }
++  photoMap.invalidateSize();
++  if (photoParcel) { photoMap.removeLayer(photoParcel); photoParcel = null; }
++  if (geometry) {
++    photoParcel = L.geoJSON(geometry, { style: { color: "#facc15", weight: 3, fill: false } }).addTo(photoMap);
++    try { photoMap.fitBounds(photoParcel.getBounds(), { maxZoom: 19, padding: [18, 18] }); }
++    catch (e) { photoMap.setView([lat, lon], 18); }
++  } else {
++    photoMap.setView([lat, lon], 18);
++  }
++}
++
++function setupAerialToggle(key) {
++  aerialLayer = L.layerGroup(vworldLayers(key));
++  document.getElementById("aerialWrap").hidden = false;
++  document.getElementById("aerialToggle").addEventListener("change", (e) => setAerial(e.target.checked));
++}
++
++function setAerial(on) {
++  if (!aerialLayer) return;
++  if (on) { map.removeLayer(osmLayer); aerialLayer.addTo(map); }
++  else { map.removeLayer(aerialLayer); osmLayer.addTo(map); }
++}
++
++B2D_CONFIG.then((cfg) => { if (cfg && cfg.vworldKey) setupAerialToggle(cfg.vworldKey); });
++
++// ---------- 리포트 출력 ----------
++// print-mode로 A4 배치를 먼저 화면에 적용해 지도들이 인쇄 크기로 타일을 다시 받게 하고,
++// 잠시 뒤 인쇄 대화상자를 연다. "PDF로 저장"을 고르면 파일이 된다. 브라우저 메뉴로
++// 인쇄해도(beforeprint) 같은 배치를 쓴다.
++function enterPrintMode() {
++  document.body.classList.add("print-mode");
++  map.invalidateSize();
++  if (photoMap) photoMap.invalidateSize();
++  if (parcelLayer) {
++    try { map.fitBounds(parcelLayer.getBounds(), { maxZoom: 17, padding: [24, 24] }); } catch (e) {}
++  }
++  if (photoMap && photoParcel) {
++    try { photoMap.fitBounds(photoParcel.getBounds(), { maxZoom: 19, padding: [18, 18] }); } catch (e) {}
++  }
++}
++function printReport() {
++  enterPrintMode();
++  setTimeout(() => window.print(), 900);
++}
++window.addEventListener("beforeprint", () => {
++  if (!document.body.classList.contains("print-mode")) enterPrintMode();
++});
++window.addEventListener("afterprint", () => {
++  document.body.classList.remove("print-mode");
++  setTimeout(() => { map.invalidateSize(); if (photoMap) photoMap.invalidateSize(); }, 60);
++});
++
+ // ---------- 오버레이(주변 상가 / 표준지) ----------
+ async function refreshOverlays() {
+   if (!lastPoint) return;
+@@ -294,8 +868,8 @@ async function loadLots(lat, lon) {
+       L.circleMarker([s.lat, s.lng], { radius: 5, color: "#a45a09", weight: 1.5, fillColor: "#eab34d", fillOpacity: 0.8 })
+         .bindPopup(
+           `<b>표준지</b> <span class="mono">${esc(s.pnu)}</span><br>` +
+-            `${formatWon(s.price_per_sqm)}원/㎡<br>${esc(s.use_zone || "")} · ${esc(s.land_use || "")}<br>` +
+-            `<span class="mono">${s.distance_m}m</span>`
++            `${formatWon(s.price_per_sqm)}원/㎡ (평당 약 ${fmtManwonNum(perPyeongManwon(s.price_per_sqm))})<br>${esc(s.use_zone || "")} · ${esc(s.land_use || "")}<br>` +
++            `<span class="mono">${esc(s.distance_m)}m</span>`
+         )
+         .addTo(lotsLayer);
+     });
+@@ -333,6 +907,19 @@ function relClass(rel) {
+   if (rel === "저촉") return "저촉";
+   return "접함";
+ }
++// 시군구 이름: 법정동 전체명에서 마지막 "시·군·구" 토막까지만 남긴다.
++// 예) "경기도 하남시 신장동" -> "경기도 하남시", "경기도 화성시 만세구 남양읍 남양리" -> "경기도 화성시 만세구"
++function sggName() {
++  const full = (R && R.parcel && R.parcel.address_name) || "";
++  const parts = full.trim().split(/\s+/);
++  let end = -1;
++  for (let i = 0; i < parts.length - 1; i++) if (/(시|군|구)$/.test(parts[i])) end = i;
++  return end >= 0 ? parts.slice(0, end + 1).join(" ") : (R ? R.sgg : "");
++}
++function lastToken(s) {
++  const parts = String(s).trim().split(/\s+/);
++  return parts[parts.length - 1] || "";
++}
+ 
+ // ---------- 이벤트 ----------
+ document.getElementById("go").addEventListener("click", () => searchAddress(document.getElementById("q").value.trim()));
+@@ -342,6 +929,9 @@ document.getElementById("q").addEventListener("keydown", (e) => {
+ map.on("click", (e) => queryPoint(e.latlng.lat, e.latlng.lng, { keepView: true }));
+ document.getElementById("poiToggle").addEventListener("change", refreshOverlays);
+ document.getElementById("lotsToggle").addEventListener("change", refreshOverlays);
++document.getElementById("salesToggle").addEventListener("change", drawSalesMarkers);
++// 판단 요약 열은 데이터가 올 때마다 다시 그려지므로 출력 버튼은 위임으로 받는다.
++results.addEventListener("click", (e) => { if (e.target.closest("#printBtn")) printReport(); });
+ 
+ const exWrap = document.getElementById("examples");
+ EXAMPLES.forEach((ex) => {
+diff --git a/web/public/pricing.html b/web/public/pricing.html
+index b122b0e..5ef007a 100644
+--- a/web/public/pricing.html
++++ b/web/public/pricing.html
+@@ -3,18 +3,18 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>요금 · b2d_geo</title>
+-  <meta name="description" content="b2d_geo 요금과 배포 형태. 관리형 API 구독, 온프레미스 라이선스, 벌크 배치. 주소 데이터가 고객 인프라 밖으로 나가지 않는 온프레미스 옵션.">
++  <title>요금 · 올맵</title>
++  <meta name="description" content="올맵(b2d_geo) 요금과 배포 형태. 관리형 API 구독, 온프레미스 라이선스, 벌크 배치. 주소 데이터가 고객 인프라 밖으로 나가지 않는 온프레미스 옵션.">
+   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+-  <meta property="og:image:alt" content="b2d_geo 로고">
+-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
++  <meta property="og:image:alt" content="올맵 로고">
++  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+   <style>.price-table td { word-break: keep-all; }</style>
+ </head>
+ <body>
+   <header class="topbar">
+-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
++    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+     <nav>
+       <a href="/map.html">지도 데모</a>
+       <a href="/batch.html">배치</a>
+@@ -50,7 +50,7 @@
+             </tbody>
+           </table>
+           <!-- TODO: 포트원 PG 심사 통과 후 아래 mailto CTA를 결제 위젯/링크로 교체 -->
+-          <p style="margin-top:14px"><a class="btn" href="mailto:info@birth2death.com?subject=b2d_geo%20standard%20%EA%B5%AC%EB%8F%85%20%EC%8B%A0%EC%B2%AD">Standard 구독 신청</a></p>
++          <p style="margin-top:14px"><a class="btn" href="mailto:info@birth2death.com?subject=%EC%98%AC%EB%A7%B5%20standard%20%EA%B5%AC%EB%8F%85%20%EC%8B%A0%EC%B2%AD">Standard 구독 신청</a></p>
+           <p class="muted" style="margin-top:8px">결제 시스템 준비 중입니다. 이메일로 신청하시면 결제 안내 후 API 키를 수동 발급해 드립니다.</p>
+           <p class="muted" style="margin-top:12px">정액 초과분 자동 과금은 없습니다. 한도 도달 시 429 응답과 함께 안내합니다. 사용량 집계는 UTC 월 기준입니다. 환불 기준은 <a href="/refund.html">환불정책</a>을 따릅니다.</p>
+         </div>
+diff --git a/web/public/privacy.html b/web/public/privacy.html
+index 68e3ec8..42b358a 100644
+--- a/web/public/privacy.html
++++ b/web/public/privacy.html
+@@ -3,13 +3,13 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>개인정보처리방침 · b2d_geo</title>
++  <title>개인정보처리방침 · 올맵</title>
+   <meta name="description" content="b2d_geo 개인정보처리방침. 수집 항목, 보유 기간, 처리 위탁, 정보주체 권리.">
+   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+-  <meta property="og:image:alt" content="b2d_geo 로고">
+-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
++  <meta property="og:image:alt" content="올맵 로고">
++  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+   <style>
+     .legal { max-width: 820px; margin: 0 auto; }
+     .legal h2 { font-size: 17px; margin: 30px 0 10px; }
+@@ -22,7 +22,7 @@
+ </head>
+ <body>
+   <header class="topbar">
+-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
++    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+     <nav>
+       <a href="/map.html">지도 데모</a>
+       <a href="/batch.html">배치</a>
+diff --git a/web/public/refund.html b/web/public/refund.html
+index f01181b..98ec92f 100644
+--- a/web/public/refund.html
++++ b/web/public/refund.html
+@@ -3,13 +3,13 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>환불정책 · b2d_geo</title>
++  <title>환불정책 · 올맵</title>
+   <meta name="description" content="b2d_geo 구독 환불정책. 청약철회, 해지, 장애 보상 기준.">
+   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+-  <meta property="og:image:alt" content="b2d_geo 로고">
+-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
++  <meta property="og:image:alt" content="올맵 로고">
++  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+   <style>
+     .legal { max-width: 820px; margin: 0 auto; }
+     .legal h2 { font-size: 17px; margin: 30px 0 10px; }
+@@ -19,7 +19,7 @@
+ </head>
+ <body>
+   <header class="topbar">
+-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
++    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+     <nav>
+       <a href="/map.html">지도 데모</a>
+       <a href="/batch.html">배치</a>
+diff --git a/web/public/shared.js b/web/public/shared.js
+index 5041bf3..ede45e6 100644
+--- a/web/public/shared.js
++++ b/web/public/shared.js
+@@ -76,6 +76,44 @@ function formatWon(n) {
+   return isFinite(v) ? v.toLocaleString("ko-KR") : "-";
+ }
+ 
++// ---- 평 단위 (1평 = 400/121㎡ ≈ 3.3058㎡, 계량법 환산값) ----
++const SQM_PER_PYEONG = 400 / 121;
++
++// "1,234.5" 같은 문자열/숫자를 숫자로. 실패하면 NaN.
++function num(v) {
++  return Number(String(v == null ? "" : v).replace(/,/g, ""));
++}
++
++// ㎡ -> "4㎡ (1.2평)". 0 이하나 숫자가 아니면 "-".
++function fmtArea(m2) {
++  const v = num(m2);
++  if (!isFinite(v) || v <= 0) return "-";
++  const py = v / SQM_PER_PYEONG;
++  const pyStr = py >= 100 ? Math.round(py).toLocaleString("ko-KR") : py.toFixed(1);
++  return `${v.toLocaleString("ko-KR")}㎡ (${pyStr}평)`;
++}
++
++// 만원 단위 숫자를 "1,234만원" 형태로 (소수 반올림).
++function fmtManwonNum(manwon) {
++  const v = Number(manwon);
++  if (!isFinite(v) || v <= 0) return "-";
++  return `${Math.round(v).toLocaleString("ko-KR")}만원`;
++}
++
++// 원/㎡ -> 평당 만원 숫자.
++function perPyeongManwon(wonPerSqm) {
++  const v = num(wonPerSqm);
++  return isFinite(v) && v > 0 ? (v * SQM_PER_PYEONG) / 10000 : NaN;
++}
++
++// 중앙값. 빈 배열이면 NaN.
++function median(arr) {
++  const a = arr.filter((x) => isFinite(x)).sort((x, y) => x - y);
++  if (!a.length) return NaN;
++  const m = Math.floor(a.length / 2);
++  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
++}
++
+ // ---- 라이트/다크 토글 (뷰어 선택을 root data-theme으로 stamp) ----
+ (function initTheme() {
+   const saved = localStorage.getItem("b2d-theme");
+diff --git a/web/public/styles.css b/web/public/styles.css
+index 6c77932..1a5baaa 100644
+--- a/web/public/styles.css
++++ b/web/public/styles.css
+@@ -371,3 +371,203 @@ table.params td.req { color: var(--warn); font-size: 11px; }
+ .match-badge.ambiguous { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+ .match-badge.error { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--ink-3); }
+ .batch-empty { color: var(--ink-3); padding: 40px; text-align: center; }
++
++/* ============ REPORT VIEW (2026-10 컨설팅 반영) ============ */
++/* 검색 전: [검색 패널 | 큰 지도]. 결과가 생기면 화이트보드 스케치대로
++   [사진+지도 1/3 | 거래내역 | 지가변동률 | 판단 요약+출력] 4열. */
++/* .toggle-row label, .photo-empty처럼 display를 지정한 요소도 hidden 속성이면 숨긴다. */
++[hidden] { display: none !important; }
++.map-app { grid-template-areas: "panel geo"; }
++.map-panel { grid-area: panel; }
++.col-geo { grid-area: geo; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
++.col-geo #map { flex: 1; height: auto; min-height: 0; }
++.results { grid-area: res; display: none; }
++.photo-box { display: none; }
++.print-head { display: none; }
++.placeholder-msg .big { font-size: 19px; font-weight: 800; color: var(--ink); opacity: 1; letter-spacing: -.01em; }
++
++.map-app.has-report {
++  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
++  grid-template-rows: auto minmax(0, 1fr);
++  grid-template-areas: "panel panel" "geo res";
++}
++.has-report .map-panel { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
++.has-report .search-wrap { flex: 1; border-bottom: 0; padding: 10px 16px; }
++.has-report .search-row { max-width: 620px; }
++.has-report .hint, .has-report .examples, .has-report #intro { display: none; }
++.has-report .toggle-row { border-bottom: 0; flex-wrap: wrap; }
++.has-report .photo-box { display: flex; flex-direction: column; height: 42%; min-height: 200px; border-bottom: 1px solid var(--border); }
++.photo-map { flex: 1; min-height: 0; background: var(--surface-3); }
++.photo-empty { flex: 1; display: grid; place-items: center; text-align: center; padding: 16px; font-size: 13px; color: var(--ink-3); background: var(--surface-2); }
++.has-report .results {
++  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
++  border-left: 1px solid var(--border); min-height: 0;
++}
++.col { min-height: 0; min-width: 0; overflow-y: auto; padding: 0 14px 18px; border-right: 1px solid var(--border); background: var(--surface); }
++.col:last-child { border-right: 0; }
++.col-title {
++  position: sticky; top: 0; z-index: 2; background: var(--surface);
++  font-size: 15px; font-weight: 800; letter-spacing: -.01em; color: var(--ink);
++  padding: 14px 0 10px; border-bottom: 2px solid var(--ink); margin-bottom: 12px;
++}
++.col-title small { font-size: 12px; font-weight: 500; color: var(--ink-3); margin-left: 6px; }
++.photo-box .col-title { position: static; padding: 10px 14px 8px; margin: 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
++.col .card { margin: 0 0 12px; }
++.col .loading { padding: 24px 0; }
++.btn.sm { padding: 5px 11px; font-size: 12.5px; }
++.price-sub { font-size: 13px; color: var(--ink-2); margin-top: 2px; font-variant-numeric: tabular-nums; }
++.note { font-size: 12px; color: var(--ink-3); margin: 10px 0 0; line-height: 1.6; }
++.badge { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
++.badge.same { background: var(--gold); color: #fff; }
++
++/* 판단 요약 열 */
++.addr-block { margin-bottom: 12px; }
++.addr-block .pnu { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
++.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
++.tile { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 11px; min-width: 0; }
++.tile .t-label { font-size: 11.5px; color: var(--ink-3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.tile .t-value { font-size: 17px; font-weight: 800; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; margin: 3px 0 1px; line-height: 1.25; word-break: keep-all; }
++.tile .t-value small { font-size: 12px; font-weight: 600; color: var(--ink-3); margin-left: 2px; white-space: nowrap; }
++.tile.wide { grid-column: 1 / -1; }
++.tile .t-sub { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
++.tile.gold .t-value { color: var(--gold); }
++.tile.up .t-value { color: var(--warn); }
++.tile.down .t-value { color: var(--accent); }
++.summary-text { margin: 12px 0 14px; padding: 12px 13px; font-size: 13.5px; color: var(--ink); line-height: 1.75; background: var(--accent-soft); border-radius: var(--radius-sm); }
++.unit-note { font-size: 12px; color: var(--ink-2); margin: 4px 0 8px; }
++.disclaimer { font-size: 11.5px; color: var(--ink-3); line-height: 1.6; margin: 0 0 12px; }
++.print-box {
++  position: sticky; bottom: 0; z-index: 2; margin: 8px -14px 0; padding: 12px 14px 14px;
++  background: var(--surface); border-top: 1px solid var(--border);
++  display: flex; flex-direction: column; align-items: stretch; gap: 6px;
++}
++.col-summary { padding-bottom: 0; } /* 출력 박스가 열 바닥에 붙도록 (아래로 내용이 비치지 않게) */
++.print-box .btn { flex: 1; padding: 11px 16px; font-size: 14.5px; }
++.print-box small { font-size: 11.5px; color: var(--ink-3); text-align: center; }
++
++/* 거래내역 열 */
++.sales-stat { display: flex; flex-direction: column; gap: 2px; font-size: 13px; margin-bottom: 8px; }
++.filter { margin-bottom: 10px; }
++.month-head { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--ink-2); padding: 10px 2px 4px; border-bottom: 1px solid var(--border-strong); font-variant-numeric: tabular-nums; }
++.sale { padding: 9px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
++.sale:hover { background: var(--surface-2); }
++.sale.same { background: linear-gradient(90deg, var(--gold-soft), transparent 80%); }
++.sale-main { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
++.sale-main .amt { color: var(--gold); font-weight: 800; font-variant-numeric: tabular-nums; font-size: 14px; }
++.sale-main .ppy { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
++.sale-main .sale-date { margin-left: auto; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
++.sale-sub { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
++
++/* 지도 위 법정동 거래 배지 */
++.umd-pin-wrap { background: none; border: 0; }
++.umd-pin {
++  transform: translate(-50%, -50%); white-space: nowrap; font-size: 11.5px; font-weight: 600;
++  padding: 3px 9px; border-radius: 999px; background: var(--surface); color: var(--ink-2);
++  border: 1.5px solid var(--gold); box-shadow: var(--shadow); cursor: pointer;
++}
++.umd-pin b { color: var(--gold); font-size: 13px; margin-right: 1px; }
++.umd-pin.same { background: var(--gold); color: #fff; border-color: var(--gold); }
++.umd-pin.same b { color: #fff; }
++.pop-row { margin-top: 6px; font-size: 12.5px; }
++
++/* 지가변동률 열 */
++.deep-ctl { flex-wrap: wrap; }
++.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; }
++.seg-btn { font: inherit; font-size: 12.5px; padding: 5px 10px; background: transparent; color: var(--ink-2); border: 0; cursor: pointer; }
++.seg-btn + .seg-btn { border-left: 1px solid var(--border-strong); }
++.seg-btn.on { background: var(--accent); color: #fff; }
++.range-label { font-size: 12.5px; color: var(--ink); background: var(--surface-2); border-radius: 6px; padding: 7px 10px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
++.range-label b { color: var(--accent); }
++.chart-box { position: relative; }
++.lchart { width: 100%; height: auto; display: block; overflow: visible; }
++.lchart .g { stroke: var(--border); stroke-width: 1; }
++.lchart .g.zero { stroke: var(--ink-3); stroke-width: 1.2; }
++.lchart .yl, .lchart .xl { fill: var(--ink-3); font-size: 12px; font-family: var(--sans); font-variant-numeric: tabular-nums; }
++.lchart .axt { fill: var(--ink-2); font-size: 11.5px; font-weight: 700; font-family: var(--sans); }
++.lchart .ln { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
++.lchart .ar { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
++.lchart .dot, .lchart .hdot { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
++.lchart .guide { stroke: var(--ink-3); stroke-dasharray: 3 3; }
++.lchart .hit { fill: transparent; cursor: crosshair; }
++.ctip {
++  position: absolute; top: 0; pointer-events: none; font-size: 12px; font-weight: 700;
++  background: var(--ink); color: var(--surface); padding: 4px 8px; border-radius: 6px; white-space: nowrap;
++  font-variant-numeric: tabular-nums;
++}
++table.zi-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 12px; font-variant-numeric: tabular-nums; }
++table.zi-table th, table.zi-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right; }
++table.zi-table th { color: var(--ink-3); font-weight: 600; font-size: 11.5px; position: sticky; top: 52px; background: var(--surface); }
++table.zi-table td:first-child, table.zi-table th:first-child { text-align: left; }
++table.zi-table td.up { color: var(--warn); }
++table.zi-table td.down { color: var(--accent); }
++
++/* 크게 보기 모달 */
++.modal { position: fixed; inset: 0; z-index: 2000; background: rgba(12, 18, 17, .55); display: grid; place-items: center; padding: 20px; }
++.modal-card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-lg); width: min(1000px, 100%); padding: 18px 20px; }
++.modal-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
++.modal-head .seg { margin-left: auto; }
++
++.dev-links { margin-top: 10px; font-size: 12.5px; }
++.dev-links a { margin: 0 6px; }
++.feat .step { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 10px; }
++
++@media (max-width: 1100px) {
++  .map-app.has-report { grid-template-columns: 1fr; grid-template-rows: auto 70vh auto; grid-template-areas: "panel" "geo" "res"; height: auto; }
++  .has-report .results { grid-template-columns: 1fr; border-left: 0; }
++  .col { overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
++  .col-title { position: static; }
++  .print-box { position: static; margin: 8px 0 0; }
++  /* 한 열로 쌓이면 판단 요약을 맨 위로 (가장 먼저 읽을 내용). */
++  .col-summary { order: -1; }
++}
++@media (max-width: 780px) {
++  .map-app { grid-template-areas: "geo" "panel"; }
++  .has-report .map-panel { flex-direction: column; align-items: stretch; }
++  .map-app.has-report { grid-template-rows: auto 60vh auto; }
++}
++
++/* ---- 리포트 출력 (A4) ---- */
++/* 출력 버튼이나 브라우저 인쇄 직전에 print-mode를 켜서, 지도가 인쇄 크기로 타일을
++   다시 받게 한다. 인쇄 순서: 제목 -> 사진·지도 -> 판단 요약 -> 지가변동률 -> 거래내역.
++   (길이가 긴 거래 목록을 맨 뒤로 보내 차트가 쪽 경계에서 잘리지 않게 한다.) */
++body.print-mode .topbar, body.print-mode .map-panel, body.print-mode .landing-foot,
++body.print-mode .no-print, body.print-mode .leaflet-control-zoom { display: none !important; }
++/* 화면에서도 A4 본문 폭(210mm - 여백 24mm)으로 줄여 두어야 지도가 인쇄 크기에 맞춰 다시 그려진다. */
++body.print-mode .map-app { display: block; height: auto; max-width: 186mm; margin: 0 auto; }
++body.print-mode .print-head { display: block; margin: 0 0 10px; }
++body.print-mode .col-geo { flex-direction: row; gap: 10px; height: 270px; margin-bottom: 12px; }
++body.print-mode .photo-box { display: flex; height: 100%; flex: 1 1 0; min-width: 0; border: 1px solid var(--border); }
++body.print-mode .photo-box .col-title { display: none; }
++body.print-mode .col-geo #map { height: 100%; flex: 1 1 0; min-width: 0; border: 1px solid var(--border); }
++body.print-mode .results { display: flex; flex-direction: column; border: 0; }
++body.print-mode .col { overflow: visible; border: 0; padding: 0; }
++body.print-mode .col-summary { order: 1; }
++body.print-mode .col-index { order: 2; }
++body.print-mode .col-sales { order: 3; }
++body.print-mode .col-title { position: static; font-size: 14px; padding: 12px 0 6px; }
++body.print-mode .sale, body.print-mode .tile, body.print-mode .card { break-inside: avoid; }
++/* 인쇄에서는 차트를 적당한 크기로, 월별 값 표는 3단으로 접어 쪽수를 줄인다. */
++body.print-mode #ziOut { max-width: 120mm; break-inside: avoid; }
++body.print-mode .range-label, body.print-mode .col-title, body.print-mode .month-head { break-after: avoid; }
++body.print-mode .sale { padding: 4px 2px; }
++body.print-mode table.zi-table, body.print-mode table.zi-table tbody { display: block; }
++body.print-mode table.zi-table thead { display: none; }
++body.print-mode table.zi-table tbody { columns: 3; column-gap: 18px; }
++body.print-mode table.zi-table tr { display: flex; justify-content: space-between; break-inside: avoid; border-bottom: 1px solid var(--border); }
++body.print-mode table.zi-table td { border: 0; padding: 2px 4px; }
++.print-head .ph-title { font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
++.print-head .ph-meta { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
++
++@media print {
++  @page { size: A4; margin: 12mm; }
++  /* 다크 테마로 보던 중이어도 종이에는 라이트 토큰으로 출력한다. */
++  :root:root {
++    color-scheme: light;
++    --bg: #fff; --surface: #fff; --surface-2: #f1f4f2; --surface-3: #e4eae7;
++    --ink: #14201c; --ink-2: #48534e; --ink-3: #6b746f; --border: #d6ddd9;
++    --border-strong: #c4cec9; --accent: #0f766e; --accent-2: #0b5c55;
++    --accent-soft: #e3f2ef; --gold: #a45a09; --gold-soft: #f8eedf;
++    --good: #15803d; --warn: #b45309; --neutral: #64748b;
++  }
++  body { background: #fff; }
++}
+diff --git a/web/public/terms.html b/web/public/terms.html
+index d054bc4..956552f 100644
+--- a/web/public/terms.html
++++ b/web/public/terms.html
+@@ -3,13 +3,13 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>이용약관 · b2d_geo</title>
++  <title>이용약관 · 올맵</title>
+   <meta name="description" content="b2d_geo 공간정보 데이터 API 서비스 이용약관.">
+   <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+   <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+   <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+-  <meta property="og:image:alt" content="b2d_geo 로고">
+-  <link rel="stylesheet" href="/styles.css?v=brand-c1abd2177e38">
++  <meta property="og:image:alt" content="올맵 로고">
++  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+   <style>
+     .legal { max-width: 820px; margin: 0 auto; }
+     .legal h2 { font-size: 17px; margin: 30px 0 10px; }
+@@ -19,7 +19,7 @@
+ </head>
+ <body>
+   <header class="topbar">
+-    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> b2d_geo</a>
++    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+     <nav>
+       <a href="/map.html">지도 데모</a>
+       <a href="/batch.html">배치</a>

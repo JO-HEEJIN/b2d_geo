@@ -29,6 +29,9 @@
   지도 화면 4열 리포트 + A4 보고서 출력, `/v1/appraisal/sales/recent` 신설. 항공사진은
   `B2D_VWORLD_KEY`가 있을 때만 켜진다. Phase 7 "V-World 실시간 연동 금지"는 항공사진 WMTS 타일만
   예외로 사용자 허용(2026-10-24). 현재 개발키 — 유료 판매 전 운영키 교체.
+- 자동 적재 (2026-10-28): ned-sync(개별공시지가·토지특성, V-World 국가중점 API) compose 데몬 운영 중(sha-d41aab8, 매일 03:17 KST).
+  rone-sync(지가변동률, R-ONE API)는 c9c574a 빌드만, 운영 반영은 todo P-3/P-4. 운영 .env 원본은 evnx `b2d-geo/production`.
+  10-24~10-28 전체 기록: docs/devnotes/2026-10-24_28_devnote.md, 남은 일: todo "열린 작업 정리 (2026-10-28 기준)".
 - 다음 작업 후보 (승인된 계획 아님 — 착수 전 사용자와 합의):
   · 상용화 백로그: deploy/OPS.md 7절 (결제·rate limit 실운영값·Cloudflare).
   · 개별공시지가/토지특성 서울 외 지역 확대 (지역선택 적재 정책).
