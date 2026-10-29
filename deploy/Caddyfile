@@ -34,3 +34,13 @@
 		format console
 	}
 }
+
+# b2d_geo/deploy/Caddyfile 맨 아래에 붙인다. ai24-app은 같은 b2d-geo_default 네트워크에 있다.
+ai24.works {
+	encode gzip zstd
+	request_body {
+		max_size 12MB
+	}
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy ai24-app:3030
+}
