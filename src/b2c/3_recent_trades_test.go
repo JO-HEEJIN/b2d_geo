@@ -2,6 +2,9 @@ package b2c
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -93,5 +96,87 @@ func TestFetchWindow(t *testing.T) {
 	}
 	if _, err := fixedAnalyzer(nil).Fetch(context.Background(), "41590"); err == nil {
 		t.Error("expected error without source")
+	}
+}
+
+func TestMolitAptTradeSource(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		calls = append(calls, q.Get("DEAL_YMD")+"/"+q.Get("pageNo"))
+		if q.Get("serviceKey") != "k+y" || q.Get("LAWD_CD") != "41597" {
+			t.Errorf("query = %v", q)
+		}
+		if q.Get("DEAL_YMD") != "202610" {
+			fmt.Fprint(w, `<response><header><resultCode>000</resultCode><resultMsg>OK</resultMsg></header><body><items></items><totalCount>0</totalCount></body></response>`)
+			return
+		}
+		fmt.Fprint(w, `<response><header><resultCode>000</resultCode><resultMsg>OK</resultMsg></header><body><items>
+<item><aptNm>동탄역시범</aptNm><dealAmount>    98,500</dealAmount><dealYear>2026</dealYear><dealMonth>10</dealMonth><dealDay>7</dealDay><excluUseAr>84.97</excluUseAr><floor>12</floor><buildYear>2015</buildYear><cdealType> </cdealType></item>
+<item><aptNm>동탄역시범</aptNm><dealAmount>97,000</dealAmount><dealYear>2026</dealYear><dealMonth>10</dealMonth><dealDay>9</dealDay><excluUseAr>84.97</excluUseAr><floor>3</floor><buildYear>2015</buildYear><cdealType>O</cdealType></item>
+<item><aptNm>broken</aptNm><dealYear>2026</dealYear><dealMonth></dealMonth><dealDay>1</dealDay></item>
+</items><totalCount>3</totalCount></body></response>`)
+	}))
+	defer srv.Close()
+	src := &MolitAptTradeSource{Key: "k+y", BaseURL: srv.URL}
+	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	got, err := src.Trades(context.Background(), "41597", from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(calls, ",") != "202609/1,202610/1" {
+		t.Errorf("calls = %v", calls)
+	}
+	if len(got) != 2 {
+		t.Fatalf("trades = %+v", got)
+	}
+	a := got[0]
+	if a.ComplexName != "동탄역시범" || a.PriceManwon != 98500 || a.AreaM2 != 84.97 || a.Floor != 12 || a.BuildYear != 2015 || a.Canceled {
+		t.Errorf("first = %+v", a)
+	}
+	if a.DealDate.Day() != 7 || !got[1].Canceled {
+		t.Errorf("date/canceled = %v %v", a.DealDate, got[1].Canceled)
+	}
+}
+
+func TestMolitAptTradeSourceErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</errMsg></cmmMsgHeader></OpenAPI_ServiceResponse>`)
+	}))
+	defer srv.Close()
+	src := &MolitAptTradeSource{Key: "secret-key", BaseURL: srv.URL}
+	_, err := src.Trades(context.Background(), "41597", tradeNow, tradeNow)
+	if err == nil || strings.Contains(err.Error(), "secret-key") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := (&MolitAptTradeSource{}).Trades(context.Background(), "41597", tradeNow, tradeNow); err == nil {
+		t.Error("expected error without key")
+	}
+}
+
+func TestMolitAptTradeSourcePaging(t *testing.T) {
+	pages := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		n := molitAptPageRows
+		if r.URL.Query().Get("pageNo") == "2" {
+			n = 5
+		}
+		var b strings.Builder
+		b.WriteString(`<response><header><resultCode>000</resultCode></header><body><items>`)
+		for i := 0; i < n; i++ {
+			b.WriteString(`<item><aptNm>a</aptNm><dealAmount>1</dealAmount><dealYear>2026</dealYear><dealMonth>10</dealMonth><dealDay>1</dealDay></item>`)
+		}
+		fmt.Fprintf(&b, `</items><totalCount>%d</totalCount></body></response>`, molitAptPageRows+5)
+		fmt.Fprint(w, b.String())
+	}))
+	defer srv.Close()
+	got, err := (&MolitAptTradeSource{Key: "k", BaseURL: srv.URL}).Trades(context.Background(), "41597", tradeNow.AddDate(0, -1, 0), tradeNow.AddDate(0, -1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages != 2 || len(got) != molitAptPageRows+5 {
+		t.Fatalf("pages=%d trades=%d", pages, len(got))
 	}
 }
