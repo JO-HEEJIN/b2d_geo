@@ -467,3 +467,111 @@ Module 5 (`remaining_listings`) + API
 - `pageParams` unit table.
 
 
+## 14. `fix/b2c-dockerignore` ([#31](https://github.com/JO-HEEJIN/b2d_geo/pull/31))
+
+### 커밋
+
+- `22399d3` fix(build): include src in the Docker build context
+
+  The Docker context is an allowlist, so src/b2c was missing and the
+  release image failed to build after the B2C merge. The image now builds
+  locally and runs the B2C commands.
+
+### Description
+
+#### Problem
+After #30 merged b2c into main, the release workflow failed:
+`internal/api/server.go:29:2: no required module provides package github.com/JO-HEEJIN/b2d_geo/src/b2c`.
+`.dockerignore` is an allowlist (`*` followed by `!cmd`, `!internal`, ...), so `src/` never reached the build context.
+
+#### Fix
+Add `!src` to `.dockerignore`.
+
+#### Verification
+- `docker build` succeeds locally.
+- `docker run --entrypoint /b2d-etl <image> b2c-listings --print-units` prints the units from inside the image.
+
+
+## 15. `feat/b2c-subway-stations` ([#33](https://github.com/JO-HEEJIN/b2d_geo/pull/33))
+
+### 커밋
+
+- `6348f74` feat(b2c): load urban rail stations from the national standard XLSX
+
+  Reads the KRIC urban rail station standard data with a stdlib-only XLSX
+  reader (shared strings, numeric and sparse cells) and loads it into
+  transit_stops as subway stations. Station numbers repeat across
+  operators, so the stop id is station number plus line number.
+  
+  Refs #17
+
+### Description
+
+Refs #17 (module 4 `infra_map`)
+
+#### Data checked
+`전체_도시철도역사정보_20260630.xlsx` (전국도시철도역사정보표준데이터, data.go.kr 15013205), one sheet.
+- Header: `역번호, 역사명, 노선번호, 노선명, 영문역사명, 한자역사명, 환승역구분, 환승노선번호, 환승노선명, 역위도, 역경도, 운영기관명, 역사도로명주소, 역사전화번호, 데이터기준일자`.
+- 1,099 rows, no coordinates outside Korea.
+- Station numbers repeat across operators (e.g. "101"), so `stop_id = 역번호-노선번호`.
+- B2C areas covered: 잠실 (2·8호선), 송도 (인천1호선, 수인선), 하남 (5호선), 수원/광교, 수지 (신분당선).
+- **Not included: 동탄역 (SRT·GTX-A).** Only 서동탄역 (경부선) is in this file.
+
+#### Changes
+- `internal/etl/transit/subway.go`: stdlib XLSX reader (`archive/zip` + `encoding/xml`, handles shared/rich-text/inline/numeric cells, fills skipped cells by column). Header is checked by column name. No third-party dependency.
+- `b2d-etl transit-subway --version YYYY-MM-DD <xlsx>`.
+
+#### Verification
+- Unit tests: rich-text shared string, missing cell, out-of-range coordinates skipped, wrong header rejected, `columnIndex`.
+- Real file into local PostGIS: `inserted=1094 skipped=0`. 5 rows repeated the same station+line and were deduplicated. Nearest to Jamsil: 잠실(송파구청) 2호선 11 m, 8호선 406 m.
+
+
+## 16. `feat/b2c-floor-plan-candidates` ([#34](https://github.com/JO-HEEJIN/b2d_geo/pull/34))
+
+### 커밋
+
+- `c747537` feat(b2c): generate floor plan candidates from the building register
+
+  Reads every apartment unit of a parcel from the building register
+  (BldRgstHubService, 100 rows per page, common-area rows dropped) and
+  groups them by exclusive area and ho line, since a real complex had all
+  538 units at 84.9 m2 but six distinct lines. Candidates carry their
+  actual units, are saved without ever overwriting a type a person filled
+  in, and can be built from b2d-etl b2c-floor-plans or the b2c_write API.
+  
+  Refs #19
+
+### Description
+
+Refs #19 (module 2 `floor_plan`)
+
+#### Data checked (live, 2026-11-04)
+`BldRgstHubService/getBrExposPubuseAreaInfo` with the account key: `resultCode 00`.
+- Each row has `dongNm`, `hoNm`, `flrNo`, `exposPubuseGbCd` (1 exclusive / 2 common), `mainPurpsCdNm`, `area` and `bldNm`.
+- **The page size is capped at 100 rows** (numOfRows=1000 or 5000 still returns 100).
+- 동탄역 신미주 (여울동 964) has 4,868 rows over 49 pages. That is 538 apartment units, **all 84.9 ㎡**, spread over lines 01-06.
+
+#### Why group by area and line
+Grouping by area alone gives one type for this complex. Units in the same ho line (last two digits) stack vertically and share a structure, so candidates are grouped by **(exclusive area, line)**. This complex gives 6 candidates. Every candidate keeps its units (dong + ho), so the existing tour and "units with this layout" features work without changes.
+
+Limits: a candidate does not know bathroom position or living room layout, and two lines can be mirror images of the same plan. People fill those in or merge lines. Nothing is pruned.
+
+#### Changes
+- `BuildingRegisterSource.Units`: pages through `totalCount`, keeps exclusive apartment rows only, deduplicates by dong+ho, keeps the key out of error text.
+- `FloorPlanCatalog.CandidatesFromUnits`: names candidates like "84㎡ 01라인" and sorts by area then line.
+- `FloorPlanStore.SaveCandidates`: `ON CONFLICT DO NOTHING` with `registered_by = building_register`, so it never overwrites a type a person filled in.
+- `ParcelComplexID`: `4159711500-0964-0000`.
+- `b2d-etl b2c-floor-plans --sigungu --bjdong --bun [--ji]` (env `MOLIT_API_KEY`).
+- `POST /v1/b2c/write/floor-plans/from-register` (`b2c_write` scope only, because one complex costs dozens of data.go.kr calls).
+
+#### Verification
+- Unit tests: grouping and order, units sorted by dong then floor, common and non-apartment rows dropped, paging to page 2 with duplicate removal, error text without the key.
+- PostGIS test: a candidate with the same name leaves the person's bathroom position alone; only the new line is added.
+- Live CLI: `units=538 candidates=6 inserted=6` (01/02: 120 units, 03/04: 90, 05: 60, 06: 58).
+- Local server:
+  - Reader key gets 403.
+  - Writer key gets 200 in about 7 s, and running it again gives `inserted=0`.
+  - Bad codes return 400.
+  - `GET /floor-plans` returns the 6 types and a tour starting at 1621동 101호.
+
+

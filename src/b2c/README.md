@@ -100,17 +100,17 @@
 | GET | `/v1/b2c/trades?lawd_cd=&complex=&build_year=` | 3 |
 | GET | `/v1/b2c/infra?lon=&lat=` | 4 |
 | GET | `/v1/b2c/listings?complex=&limit=&offset=` | 5 (페이지: limit 1-200, 기본 50, `next_offset`) |
-| POST | `/v1/b2c/write/floor-plans` | 2 등록 |
+| POST | `/v1/b2c/write/floor-plans`, `/v1/b2c/write/floor-plans/from-register` | 2 등록·건축물대장 후보 |
 | POST | `/v1/b2c/write/listings`, `/v1/b2c/write/listings/{id}/close` | 5 등록·팔림 |
 
 ## 데이터 원천
 
 | 모듈 | 원천 | 상태 |
 |---|---|---|
-| 2 평면 | `b2c_floor_plans` (직접 등록) | 사용 중. 건축물대장 전유부 API는 키로 호출 확인, 자동 후보는 다음 작업 |
-| 3 실거래 | 국토부 아파트 매매 실거래 API | 코드 완료. data.go.kr에서 이 API 이용 신청 필요 (키는 토지 실거래만 등록됨) |
+| 2 평면 | `b2c_floor_plans` (직접 등록 + 건축물대장 전유부 자동 후보: 전용면적 x 호 라인) | 사용 중 |
+| 3 실거래 | 국토부 아파트 매매 실거래 API | 사용 중 (2026-11-04 실호출: 동탄구 6개월 4,294건) |
 | 4 버스 | 국토부 전국 버스정류장 위치정보 CSV | 적재 명령 `b2d-etl transit-bus` |
-| 4 지하철 | 국가철도공단 도시광역철도 역사정보 XLSX | 파일 수동 다운로드 후 로더 작성 |
+| 4 지하철 | 전국도시철도역사정보표준데이터 XLSX | 적재 명령 `b2d-etl transit-subway` (동탄역 SRT·GTX-A 없음) |
 | 4 편의점·병원 | 소상공인 상가정보 (`places`) | 사용 중 |
 | 5 매물 | `b2c_listings` (중개사·집주인 직접 등록) | 사용 중. 계약 피드는 사업 협의 |
 
@@ -132,5 +132,7 @@
 go test ./src/b2c
 B2D_TEST_DATABASE_URL=postgres://b2d:b2d_local_dev@localhost:5433/b2d_geo go test ./src/b2c   # PostGIS 테스트 포함
 b2d-etl transit-bus --version 2026-10-20 <버스정류장.csv>
+b2d-etl transit-subway --version 2026-06-30 <도시철도역사정보.xlsx>
+MOLIT_API_KEY=... b2d-etl b2c-floor-plans --sigungu 41597 --bjdong 11500 --bun 0964   # 평면 후보
 b2d-etl b2c-listings --state /state/listings.json      # 남은 매물 1회 갱신 (--print-units: systemd 유닛 출력)
 ```
