@@ -1,0 +1,439 @@
+package b2c
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Listing은 지금 팔려고 내놓은 매물 1건이다.
+type Listing struct {
+	ID           string    `json:"id"`
+	ComplexName  string    `json:"complex_name"`
+	TypeName     string    `json:"type_name,omitempty"` // 평면 타입 (모듈 2와 같은 이름)
+	AskingManwon int       `json:"asking_manwon"`       // 호가 (만원)
+	Floor        int       `json:"floor,omitempty"`
+	Lon          float64   `json:"lon,omitempty"`
+	Lat          float64   `json:"lat,omitempty"`
+	Source       string    `json:"source"` // 원천 이름. 출처를 항상 남긴다
+	FirstSeen    time.Time `json:"first_seen"`
+	LastSeen     time.Time `json:"last_seen"`
+}
+
+// ListingSource는 현재 나와 있는 매물 전체를 돌려준다. 이용 계약이 있는 매물 피드나
+// 중개사·집주인이 직접 등록한 매물만 원천이 될 수 있다. 포털 스크레이핑은 금지다.
+type ListingSource interface {
+	Fetch(ctx context.Context) ([]Listing, error)
+}
+
+// ListingChange는 Refresh 한 번에 생긴 변화다.
+type ListingChange struct {
+	Added []Listing // 새로 나온 매물
+	Gone  []Listing // 사라진 매물 (팔렸거나 내려감)
+}
+
+// listingsOnCalendar는 systemd 타이머 주기다. 매분 0초에 돈다.
+const listingsOnCalendar = "*:*:00"
+
+// goneKeep은 사라진 매물을 "방금 팔림"으로 보여주는 기간이다.
+const goneKeep = 7 * 24 * time.Hour
+
+// RemainingListings는 남은 매물을 계속 새로 고쳐 보여준다. 매물이 워낙 빠르게
+// 거래되므로 systemd 타이머(Persistent=true)가 Refresh를 매분 부르고, 상태는
+// JSON 파일로 실행 사이에 이어진다.
+type RemainingListings struct {
+	source ListingSource
+	now    func() time.Time
+
+	mu     sync.Mutex
+	active map[string]Listing
+	gone   map[string]Listing
+}
+
+// NewRemainingListings는 매물 원천으로 남은 매물 목록을 만든다.
+func NewRemainingListings(source ListingSource) *RemainingListings {
+	return &RemainingListings{
+		source: source,
+		now:    time.Now,
+		active: map[string]Listing{},
+		gone:   map[string]Listing{},
+	}
+}
+
+// Refresh는 원천에서 현재 매물을 받아 직전 상태와 비교한다. 새 매물은 Added,
+// 이번에 안 보이는 매물은 Gone으로 옮긴다. 원천이 실패하면 상태를 건드리지 않는다.
+func (r *RemainingListings) Refresh(ctx context.Context) (ListingChange, error) {
+	current, err := r.source.Fetch(ctx)
+	if err != nil {
+		return ListingChange{}, fmt.Errorf("fetch listings: %w", err)
+	}
+	now := r.now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var change ListingChange
+	seen := make(map[string]bool, len(current))
+	for _, l := range current {
+		seen[l.ID] = true
+		if prev, ok := r.active[l.ID]; ok {
+			l.FirstSeen = prev.FirstSeen
+		} else {
+			l.FirstSeen = now
+			delete(r.gone, l.ID) // 다시 올라온 매물
+			change.Added = append(change.Added, l)
+		}
+		l.LastSeen = now
+		r.active[l.ID] = l
+	}
+	for id, l := range r.active {
+		if !seen[id] {
+			delete(r.active, id)
+			r.gone[id] = l
+			change.Gone = append(change.Gone, l)
+		}
+	}
+	for id, l := range r.gone {
+		if now.Sub(l.LastSeen) > goneKeep {
+			delete(r.gone, id)
+		}
+	}
+	sortListings(change.Added)
+	sortListings(change.Gone)
+	return change, nil
+}
+
+// Remaining은 지금 남아 있는 매물 전부를 돌려준다. complexName이 비지 않으면 그
+// 단지만. 추려서 줄이지 않는다. 여러 집을 둘러보는 것 자체가 즐거움이다.
+func (r *RemainingListings) Remaining(complexName string) []Listing {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []Listing
+	for _, l := range r.active {
+		if complexName == "" || l.ComplexName == complexName {
+			out = append(out, l)
+		}
+	}
+	sortListings(out)
+	return out
+}
+
+// AddedSince는 since 이후 새로 나온 매물이다 ("새 매물" 알림용).
+func (r *RemainingListings) AddedSince(since time.Time) []Listing {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []Listing
+	for _, l := range r.active {
+		if !l.FirstSeen.Before(since) {
+			out = append(out, l)
+		}
+	}
+	sortListings(out)
+	return out
+}
+
+// RecentlyGone은 since 이후 사라진 매물이다. "방금 팔림"을 보여주면 이 동네가
+// 실제로 거래되고 있다는 것을 사용자가 눈으로 느낀다.
+func (r *RemainingListings) RecentlyGone(since time.Time) []Listing {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []Listing
+	for _, l := range r.gone {
+		if !l.LastSeen.Before(since) {
+			out = append(out, l)
+		}
+	}
+	sortListings(out)
+	return out
+}
+
+type listingsState struct {
+	Active []Listing `json:"active"`
+	Gone   []Listing `json:"gone"`
+}
+
+// LoadState는 직전 실행이 저장한 상태를 읽는다. 파일이 없으면 빈 상태로 시작한다.
+func (r *RemainingListings) LoadState(path string) error {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var st listingsState
+	if err := json.Unmarshal(b, &st); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.active, r.gone = map[string]Listing{}, map[string]Listing{}
+	for _, l := range st.Active {
+		r.active[l.ID] = l
+	}
+	for _, l := range st.Gone {
+		r.gone[l.ID] = l
+	}
+	return nil
+}
+
+// SaveState는 상태를 임시 파일에 쓴 뒤 이름을 바꿔 저장한다. 타이머가 실행 도중
+// 끊겨도 반쯤 쓴 파일이 남지 않는다.
+func (r *RemainingListings) SaveState(path string) error {
+	r.mu.Lock()
+	st := listingsState{}
+	for _, l := range r.active {
+		st.Active = append(st.Active, l)
+	}
+	for _, l := range r.gone {
+		st.Gone = append(st.Gone, l)
+	}
+	r.mu.Unlock()
+	sortListings(st.Active)
+	sortListings(st.Gone)
+	b, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".listings-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// SystemdUnits는 서버에 둘 systemd 서비스와 타이머 파일 내용을 돌려준다.
+// cron이 아니라 타이머를 쓰는 이유: Persistent=true라서 서버가 꺼져 있던 사이
+// 놓친 실행을 부팅 직후 바로 따라잡고, 실행 기록이 journalctl에 남는다.
+// execStart는 Refresh 한 번을 돌리고 끝나는 명령이다.
+func (r *RemainingListings) SystemdUnits(execStart string) map[string]string {
+	service := strings.Join([]string{
+		"[Unit]",
+		"Description=b2c remaining listings refresh",
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=oneshot",
+		"ExecStart=" + execStart,
+		"TimeoutStartSec=50",
+		"",
+	}, "\n")
+	timer := strings.Join([]string{
+		"[Unit]",
+		"Description=Refresh b2c remaining listings every minute",
+		"",
+		"[Timer]",
+		"OnCalendar=" + listingsOnCalendar,
+		"AccuracySec=1s",
+		"Persistent=true",
+		"Unit=b2c-listings.service",
+		"",
+		"[Install]",
+		"WantedBy=timers.target",
+		"",
+	}, "\n")
+	return map[string]string{
+		"b2c-listings.service": service,
+		"b2c-listings.timer":   timer,
+	}
+}
+
+// sortListings는 단지, 호가, ID 순으로 정렬한다.
+func sortListings(list []Listing) {
+	sort.Slice(list, func(i, j int) bool {
+		a, b := list[i], list[j]
+		if a.ComplexName != b.ComplexName {
+			return a.ComplexName < b.ComplexName
+		}
+		if a.AskingManwon != b.AskingManwon {
+			return a.AskingManwon < b.AskingManwon
+		}
+		return a.ID < b.ID
+	})
+}
+
+// DirectListingSourceName은 직접 등록 매물의 Listing.Source 값이다.
+const DirectListingSourceName = "direct_registration"
+
+// ListingStore는 중개사·집주인이 직접 등록한 매물을 b2c_listings에 두고,
+// RemainingListings가 읽는 ListingSource 역할도 한다.
+type ListingStore struct {
+	pool *pgxpool.Pool
+}
+
+// NewListingStore는 b2c_listings 테이블을 쓰는 매물 저장소를 만든다.
+func NewListingStore(pool *pgxpool.Pool) *ListingStore {
+	return &ListingStore{pool: pool}
+}
+
+// Register는 매물을 등록하고 새 ID를 돌려준다. registeredBy는 등록한 사람(API 키 이름 등)이다.
+func (s *ListingStore) Register(ctx context.Context, l Listing, registeredBy string) (string, error) {
+	if strings.TrimSpace(l.ComplexName) == "" || l.AskingManwon <= 0 || registeredBy == "" {
+		return "", fmt.Errorf("complex_name, asking_manwon(>0), registered_by required")
+	}
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO b2c_listings (complex_name, type_name, asking_manwon, floor, lon, lat, registered_by)
+		VALUES ($1, NULLIF($2, ''), $3, NULLIF($4, 0), NULLIF($5, 0), NULLIF($6, 0), $7)
+		RETURNING id`,
+		strings.TrimSpace(l.ComplexName), l.TypeName, l.AskingManwon, l.Floor, l.Lon, l.Lat, registeredBy).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return strconv.FormatInt(id, 10), nil
+}
+
+// Close는 매물을 팔림(sold) 또는 내림(withdrawn)으로 바꾼다. 다음 Refresh에서 Gone으로 잡힌다.
+// 등록한 사람만 닫을 수 있다.
+func (s *ListingStore) Close(ctx context.Context, id, status, registeredBy string) error {
+	if status != "sold" && status != "withdrawn" {
+		return fmt.Errorf("status must be sold or withdrawn")
+	}
+	n, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid listing id %q", id)
+	}
+	ct, err := s.pool.Exec(ctx, `
+		UPDATE b2c_listings SET status = $2, updated_at = now()
+		WHERE id = $1 AND status = 'active' AND registered_by = $3`, n, status, registeredBy)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrListingNotFound
+	}
+	return nil
+}
+
+// ErrListingNotFound는 닫을 매물이 없거나(이미 닫힘 포함) 등록자가 다를 때다.
+var ErrListingNotFound = errors.New("active listing not found for this registrant")
+
+// Fetch는 지금 active인 직접 등록 매물 전부를 돌려준다 (ListingSource 구현).
+func (s *ListingStore) Fetch(ctx context.Context) ([]Listing, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
+		FROM b2c_listings WHERE status = 'active'`)
+	if err != nil {
+		return nil, err
+	}
+	return scanListings(rows)
+}
+
+// ListingPage는 남은 매물 목록의 한 페이지다. 전부를 보여주되 한 번에 내려보내는 양만 나눈다.
+type ListingPage struct {
+	Listings   []Listing `json:"listings"`
+	Total      int       `json:"total"`
+	Limit      int       `json:"limit"`
+	Offset     int       `json:"offset"`
+	NextOffset *int      `json:"next_offset"` // 마지막 페이지면 null
+}
+
+const (
+	listingPageDefault = 50
+	listingPageMax     = 200
+)
+
+// Page는 active 직접 등록 매물을 단지, 호가, ID 순으로 limit개씩 돌려준다.
+// limit이 0 이하면 50, 200을 넘으면 200으로 맞춘다. 정렬이 고정이라 offset이 안정적이다.
+func (s *ListingStore) Page(ctx context.Context, complexName string, limit, offset int) (ListingPage, error) {
+	if limit <= 0 {
+		limit = listingPageDefault
+	}
+	if limit > listingPageMax {
+		limit = listingPageMax
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	page := ListingPage{Listings: []Listing{}, Limit: limit, Offset: offset}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM b2c_listings
+		WHERE status = 'active' AND ($1 = '' OR complex_name = $1)`, complexName).Scan(&page.Total); err != nil {
+		return ListingPage{}, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
+		FROM b2c_listings
+		WHERE status = 'active' AND ($1 = '' OR complex_name = $1)
+		ORDER BY complex_name, asking_manwon, id
+		LIMIT $2 OFFSET $3`, complexName, limit, offset)
+	if err != nil {
+		return ListingPage{}, err
+	}
+	list, err := scanListings(rows)
+	if err != nil {
+		return ListingPage{}, err
+	}
+	if list != nil {
+		page.Listings = list
+	}
+	if next := offset + len(list); next < page.Total {
+		page.NextOffset = &next
+	}
+	return page, nil
+}
+
+// Sold는 since 이후 팔린 직접 등록 매물을 최근 순으로 최대 50건 돌려준다.
+// complexName이 비지 않으면 그 단지만. LastSeen은 팔림으로 바뀐 시각이다.
+func (s *ListingStore) Sold(ctx context.Context, complexName string, since time.Time) ([]Listing, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
+		FROM b2c_listings
+		WHERE status = 'sold' AND updated_at >= $1 AND ($2 = '' OR complex_name = $2)
+		ORDER BY updated_at DESC
+		LIMIT $3`, since, complexName, listingPageDefault)
+	if err != nil {
+		return nil, err
+	}
+	return scanListings(rows)
+}
+
+func scanListings(rows pgx.Rows) ([]Listing, error) {
+	defer rows.Close()
+	var out []Listing
+	for rows.Next() {
+		var id int64
+		l := Listing{Source: DirectListingSourceName}
+		if err := rows.Scan(&id, &l.ComplexName, &l.TypeName, &l.AskingManwon, &l.Floor, &l.Lon, &l.Lat,
+			&l.FirstSeen, &l.LastSeen); err != nil {
+			return nil, err
+		}
+		l.ID = strconv.FormatInt(id, 10)
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// RefreshOnce는 systemd 타이머가 한 번 부르는 작업이다: 상태 읽기 -> Refresh -> 상태 저장.
+func (r *RemainingListings) RefreshOnce(ctx context.Context, statePath string) (ListingChange, error) {
+	if err := r.LoadState(statePath); err != nil {
+		return ListingChange{}, err
+	}
+	change, err := r.Refresh(ctx)
+	if err != nil {
+		return ListingChange{}, err
+	}
+	return change, r.SaveState(statePath)
+}

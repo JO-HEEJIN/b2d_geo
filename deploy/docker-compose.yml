@@ -92,6 +92,19 @@ services:
       B2D_VWORLD_KEY: ${B2D_VWORLD_KEY:-}
       B2D_VWORLD_DOMAIN: ${B2D_VWORLD_DOMAIN:-https://api.birth2death.com}
 
+  # B2C 남은 매물 갱신. 상시 데몬이 아니라 서버 systemd 타이머(b2c-listings.timer, 매분, Persistent=true)가
+  # `docker compose run --rm --no-deps b2c-listings`로 한 번씩 돌린다. profile oneshot이라 `up`으로는 뜨지 않는다.
+  # 상태 파일은 호스트 /var/lib/b2c-listings에 둔다(distroless nonroot=65532가 쓸 수 있게 미리 만들어 둔다).
+  b2c-listings:
+    image: ghcr.io/jo-heejin/b2d_geo:latest
+    profiles: ["oneshot"]
+    entrypoint: ["/b2d-etl"]
+    command: ["b2c-listings", "--state", "/state/listings.json"]
+    environment:
+      B2D_DATABASE_URL: postgres://${POSTGRES_USER:-b2d}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-b2d_geo}?sslmode=disable
+    volumes:
+      - /var/lib/b2c-listings:/state
+
   # 지가변동률 자동 적재. 매일 03:17 KST에 R-ONE Open API에서 (월) 용도지역별 지가변동률 중 아직 없는 달과
   # 마지막 3개월을 받는다(첫 실행은 2005-01부터 백필). 로그: docker compose logs rone-sync
   rone-sync:

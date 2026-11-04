@@ -166,6 +166,24 @@ $RUN rone-sync                                       # 백필: 2005-01부터 이
 - 자동 실행: compose 서비스 `rone-sync`(데몬, 매일 03:17 KST, ned-sync와 같은 시각). 운영 Lightsail은 override에 같은 서비스를 넣어 띄운다.
 - 로그: `docker compose logs --tail 20 rone-sync`.
 
+## 6-4. B2C 남은 매물 갱신 (b2c-listings systemd 타이머)
+
+cron이 아니라 systemd 타이머가 매분 `docker compose run --rm --no-deps b2c-listings`를 한 번 돌린다.
+`Persistent=true`라서 서버가 꺼져 있던 사이 놓친 실행은 부팅 직후 바로 따라잡는다. 매물 원천은
+`b2c_listings`(직접 등록)뿐이다(ADR 0002). 마이그레이션 015가 적용된 이미지여야 한다.
+
+```sh
+cd ~/b2d_geo/deploy && docker compose pull && docker compose run --rm --no-deps --entrypoint /b2d-etl app migrate
+sudo install -d -o 65532 -g 65532 /var/lib/b2c-listings      # distroless nonroot가 상태 파일을 쓴다
+docker compose run --rm --no-deps --entrypoint /b2d-etl app b2c-listings --print-units   # 유닛 내용 출력
+sudo ned /etc/systemd/system/b2c-listings.service            # 출력의 service 부분을 붙여 넣는다
+sudo ned /etc/systemd/system/b2c-listings.timer              # 출력의 timer 부분을 붙여 넣는다
+sudo systemd-analyze verify /etc/systemd/system/b2c-listings.{service,timer}
+sudo systemctl daemon-reload && sudo systemctl enable --now b2c-listings.timer
+systemctl list-timers b2c-listings.timer                      # 다음 실행 시각
+journalctl -u b2c-listings -n 20                              # "b2c-listings: added=N gone=M"
+```
+
 ## 7. "진짜 서비스" 백로그 (M1에서 이어서)
 
 지금도 세 부류(일반인·개발자·감평사) 조회는 다 되지만, 상용화하려면:

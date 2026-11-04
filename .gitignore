@@ -46,3 +46,6 @@ skills-lock.json
 
 # serena tool cache
 .serena/
+
+# local agent settings (not shared)
+.claude/
