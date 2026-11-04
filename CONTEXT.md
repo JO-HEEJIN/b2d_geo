@@ -22,3 +22,16 @@
 - Caddy 접근 로그는 파일로 출력하고 90일 후 순환·파기한다.
 - 결제 시스템 연동 전까지 Standard 신청은 이메일 접수 후 수동 발급한다.
 - 포트원 경유 PG 방향은 [ADR 0001](docs/adr/0001-payment-provider-portone.md)에 기록한다.
+
+## B2C 모듈 (b2c 브랜치)
+
+- 일반 사용자용 기능은 `src/b2c/` 한 패키지에 있다. 모듈 번호는 `Keywords` 사전의 키이고
+  파일 이름 앞 숫자와 같다: 1 district, 2 floor_plan, 3 recent_trades, 4 infra_map,
+  5 remaining_listings. 모듈 하나는 파일 하나, 기능은 구조체 메서드다.
+- 공통 원칙: 후보를 추려 줄이지 않고 전부 보여준다. 판단 문구는 사람이 느끼는 감정
+  (조급함, 남들도 샀다는 안도감, 계약 뒤 수리비)을 따른다.
+- 구역은 송도동·1동탄·2동탄·하남·용인 수지·수원·잠실 일곱 곳뿐이다. 1/2동탄은 법정동으로 가른다.
+- 서버·API에는 아직 연결되지 않았다. 실거래(TradeSource), 지하철·버스(FacilitySource),
+  매물(ListingSource) 원천은 인터페이스만 있고, 편의점·병원은 `internal/places.Nearby`를 쓴다.
+- 남은 매물 원천은 계약 피드와 직접 등록만 허용한다([ADR 0002](docs/adr/0002-b2c-listing-source-no-scraping.md)).
+  갱신은 systemd 타이머(매분, `Persistent=true`)로 한다.
