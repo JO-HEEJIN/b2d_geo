@@ -32,20 +32,21 @@ const (
 
 // Facility는 주변 시설 1곳이다.
 type Facility struct {
-	Kind        InfraKind
-	Name        string
-	Address     string
-	Lon, Lat    float64
-	DistanceM   float64 // 직선거리
-	WalkMinutes int
+	Kind        InfraKind `json:"kind"`
+	Name        string    `json:"name"`
+	Address     string    `json:"address"`
+	Lon         float64   `json:"lon"`
+	Lat         float64   `json:"lat"`
+	DistanceM   float64   `json:"distance_m"` // 직선거리
+	WalkMinutes int       `json:"walk_minutes"`
 }
 
 // InfraLine은 요약의 한 줄이다. Found가 false면 반경 안에 없거나 데이터가 아직 없다.
 type InfraLine struct {
-	Kind     InfraKind
-	Found    bool
-	Facility Facility
-	Note     string
+	Kind     InfraKind `json:"kind"`
+	Found    bool      `json:"found"`
+	Facility Facility  `json:"facility"`
+	Note     string    `json:"note"`
 }
 
 // FacilitySource는 한 종류의 시설을 가까운 순으로 찾는다.

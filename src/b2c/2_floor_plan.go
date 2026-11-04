@@ -12,29 +12,30 @@ import (
 // FloorPlanVariant는 한 단지 안의 평면 타입 하나다. 같은 단지, 같은 평형이어도
 // 화장실 위치나 거실 구조가 다르므로 타입(84A/84B)마다 따로 둔다.
 type FloorPlanVariant struct {
-	ComplexID        string
-	TypeName         string   // 예: "84A"
-	ExclusiveAreaM2  float64  // 전용면적
-	Rooms            int      // 방 수
-	Bathrooms        int      // 화장실 수
-	Bays             int      // 베이 수 (전면 발코니 쪽 칸 수)
-	BathroomPosition string   // 예: "현관 옆 공용, 안방 안쪽 부부욕실"
-	LivingRoom       string   // 예: "판상형 맞통풍", "타워형 2면 개방"
-	Orientation      string   // 향. 예: "남향"
-	ImageURL         string   // 출처가 분명한 평면도 이미지만 (분양공고 등)
-	Units            []string // 이 구조인 동·호. 예: "101동 1203호"
+	ComplexID        string   `json:"complex_id"`
+	TypeName         string   `json:"type_name"`         // 예: "84A"
+	ExclusiveAreaM2  float64  `json:"exclusive_area_m2"` // 전용면적
+	Rooms            int      `json:"rooms"`             // 방 수
+	Bathrooms        int      `json:"bathrooms"`         // 화장실 수
+	Bays             int      `json:"bays"`              // 베이 수 (전면 발코니 쪽 칸 수)
+	BathroomPosition string   `json:"bathroom_position"` // 예: "현관 옆 공용, 안방 안쪽 부부욕실"
+	LivingRoom       string   `json:"living_room"`       // 예: "판상형 맞통풍", "타워형 2면 개방"
+	Orientation      string   `json:"orientation"`       // 향. 예: "남향"
+	ImageURL         string   `json:"image_url"`         // 출처가 분명한 평면도 이미지만 (분양공고 등)
+	Units            []string `json:"units"`             // 이 구조인 동·호. 예: "101동 1203호"
 }
 
 // LayoutDiff는 두 평면 타입이 다른 항목 하나다.
 type LayoutDiff struct {
-	Field string
-	A, B  string
+	Field string `json:"field"`
+	A     string `json:"a"`
+	B     string `json:"b"`
 }
 
 // TourStop은 집 보기 동선의 한 곳이다. 타입마다 하나씩, 직접 들어가 볼 세대를 붙인다.
 type TourStop struct {
-	Variant FloorPlanVariant
-	Unit    string // 비면 아직 볼 수 있는 세대가 등록되지 않았다
+	Variant FloorPlanVariant `json:"variant"`
+	Unit    string           `json:"unit"` // 비면 아직 볼 수 있는 세대가 등록되지 않았다
 }
 
 // FloorPlanCatalog는 단지별 평면 타입을 모아 비교하고, 직접 볼 세대를 찾아 준다.

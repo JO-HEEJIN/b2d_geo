@@ -174,10 +174,13 @@ func extractKey(r *http.Request) string {
 }
 
 // requiredScope는 경로에 필요한 scope를 돌려준다. /v1/appraisal/*는 realestate,
-// 나머지는 geo.
+// /v1/b2c/write/*(B2C 매물·평면 등록)는 b2c_write, 나머지는 geo.
 func requiredScope(path string) string {
 	if strings.HasPrefix(path, "/v1/appraisal/") {
 		return "realestate"
+	}
+	if strings.HasPrefix(path, "/v1/b2c/write/") {
+		return "b2c_write"
 	}
 	if path == "/v1/usage" {
 		return "" // 사용량 조회는 인증만 하면 scope 무관(메타 엔드포인트)

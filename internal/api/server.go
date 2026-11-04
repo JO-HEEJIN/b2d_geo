@@ -26,6 +26,7 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/parcel"
 	"github.com/JO-HEEJIN/b2d_geo/internal/places"
 	"github.com/JO-HEEJIN/b2d_geo/internal/revgeo"
+	"github.com/JO-HEEJIN/b2d_geo/src/b2c"
 	"github.com/JO-HEEJIN/b2d_geo/web"
 )
 
@@ -58,6 +59,8 @@ func New(pool *pgxpool.Pool, molitKey string) (http.Handler, func()) {
 	mux.HandleFunc("GET /v1/appraisal/official-price", s.appraisalOfficialPrice)
 	mux.HandleFunc("GET /v1/appraisal/land-use", s.appraisalLandUse)
 	mux.HandleFunc("GET /v1/appraisal/land-features", s.appraisalLandFeatures)
+	// B2C(일반 사용자) 기능. 판단 문구가 들어가므로 핸들러는 src/b2c에 두고 여기서는 경로만 붙인다.
+	mux.Handle("/v1/b2c/", b2c.NewHandler(pool, molitKey))
 
 	// Phase 4 미들웨어 체인: IP rate limit → auth → key rate limit → meter
 	// → handler. IP 제한이 최외곽이라 미인증 플러드도 막는다 (QA MED-1).

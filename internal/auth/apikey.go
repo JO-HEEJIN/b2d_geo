@@ -15,8 +15,8 @@ import (
 const keyPrefixLen = 8
 
 // validScopes는 발급 가능한 scope 화이트리스트다. geo는 위치 API, realestate는
-// /v1/appraisal/* 계열에 필요하다.
-var validScopes = map[string]bool{"geo": true, "realestate": true}
+// /v1/appraisal/* 계열, b2c_write는 /v1/b2c/write/*(B2C 매물·평면 등록)에 필요하다.
+var validScopes = map[string]bool{"geo": true, "realestate": true, "b2c_write": true}
 
 // validTiers는 발급 가능한 요금 티어 화이트리스트다. demo는 무료 소량(월 캡 없음,
 // rate limit만), standard는 유료 정액 1티어(월 호출 하드캡)다.
@@ -55,7 +55,7 @@ func ParseScopes(csv string) ([]string, error) {
 			continue
 		}
 		if !validScopes[s] {
-			return nil, fmt.Errorf("unknown scope: %q (valid: geo, realestate)", s)
+			return nil, fmt.Errorf("unknown scope: %q (valid: geo, realestate, b2c_write)", s)
 		}
 		if !seen[s] {
 			seen[s] = true
