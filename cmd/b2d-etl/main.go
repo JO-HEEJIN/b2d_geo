@@ -35,7 +35,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|transit-subway|b2c-listings|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|transit-subway|b2c-floor-plans|b2c-listings|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -127,6 +127,11 @@ func main() {
 	case "transit-subway":
 		if err := runTransitSubway(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "transit-subway failed:", err)
+			os.Exit(1)
+		}
+	case "b2c-floor-plans":
+		if err := runB2CFloorPlans(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "b2c-floor-plans failed:", err)
 			os.Exit(1)
 		}
 	case "b2c-listings":
@@ -266,6 +271,47 @@ func runTransitSubway(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("transit-subway load: inserted=%d skipped=%d source_version=%s\n", inserted, skipped, *version)
+	return nil
+}
+
+// runB2CFloorPlans는 건축물대장 전유부로 단지(필지)의 평면 타입 후보를 만들어 저장한다.
+// 키는 env MOLIT_API_KEY(같은 data.go.kr 계정 키)를 쓴다. 이미 있는 타입은 덮어쓰지 않는다.
+func runB2CFloorPlans(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("b2c-floor-plans", flag.ContinueOnError)
+	sigungu := fs.String("sigungu", "", "시군구코드 5자리 (예: 41597)")
+	bjdong := fs.String("bjdong", "", "법정동코드 뒤 5자리 (예: 11500)")
+	bun := fs.String("bun", "", "번 4자리 (예: 0964)")
+	ji := fs.String("ji", "0000", "지 4자리")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if len(*sigungu) != 5 || len(*bjdong) != 5 || len(*bun) != 4 || len(*ji) != 4 {
+		return fmt.Errorf("usage: b2d-etl b2c-floor-plans --sigungu 41597 --bjdong 11500 --bun 0964 [--ji 0000]")
+	}
+	src := &b2c.BuildingRegisterSource{Key: os.Getenv("MOLIT_API_KEY")}
+	units, err := src.Units(ctx, *sigungu, *bjdong, *bun, *ji)
+	if err != nil {
+		return err
+	}
+	id := b2c.ParcelComplexID(*sigungu, *bjdong, *bun, *ji)
+	candidates := b2c.NewFloorPlanCatalog().CandidatesFromUnits(id, units)
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	inserted, err := b2c.NewFloorPlanStore(pool).SaveCandidates(ctx, candidates)
+	if err != nil {
+		return err
+	}
+	name := ""
+	if len(units) > 0 {
+		name = units[0].BuildingName
+	}
+	fmt.Printf("b2c-floor-plans: complex_id=%s name=%q units=%d candidates=%d inserted=%d\n", id, name, len(units), len(candidates), inserted)
+	for _, c := range candidates {
+		fmt.Printf("  %s  %d세대\n", c.TypeName, len(c.Units))
+	}
 	return nil
 }
 
