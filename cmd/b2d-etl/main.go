@@ -495,6 +495,11 @@ func runB2CListings(ctx context.Context, args []string) error {
 	if err := validateB2CListingStateSource(*state, mode); err != nil {
 		return err
 	}
+	if mode == "naver" {
+		if err := checkNaverCooldown(*state, time.Now()); err != nil {
+			return err
+		}
+	}
 	// systemd's 180-second limit leaves time to return an error and preserve state.
 	ctx, cancel := context.WithTimeout(ctx, 165*time.Second)
 	defer cancel()
@@ -505,6 +510,11 @@ func runB2CListings(ctx context.Context, args []string) error {
 		if errors.As(err, &fetchErr) {
 			fmt.Fprintf(os.Stderr, "b2c-listings: cause=%s status=%d host=%s page=%d\n",
 				fetchErr.Cause, fetchErr.StatusCode, fetchErr.Host, fetchErr.Page)
+			if mode == "naver" && fetchErr.StatusCode == 429 && fetchErr.RetryAfter > 0 {
+				if saveErr := saveNaverCooldown(*state, time.Now().Add(fetchErr.RetryAfter)); saveErr != nil {
+					return errors.Join(err, fmt.Errorf("persist rate-limit deadline: %w", saveErr))
+				}
+			}
 		}
 		return err
 	}
@@ -527,6 +537,48 @@ func runB2CListings(ctx context.Context, args []string) error {
 		fmt.Fprintf(os.Stderr, "b2c-listings: warning: source=%s active=0\n", mode)
 	}
 	return nil
+}
+
+func checkNaverCooldown(statePath string, now time.Time) error {
+	raw, err := os.ReadFile(statePath + ".retry-after")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var cooldown struct {
+		Until time.Time `json:"until"`
+	}
+	if err := json.Unmarshal(raw, &cooldown); err != nil || cooldown.Until.IsZero() {
+		return fmt.Errorf("invalid Naver rate-limit deadline; no request sent")
+	}
+	if cooldown.Until.After(now) {
+		return fmt.Errorf("Naver rate-limited until %s; no request sent", cooldown.Until.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+func saveNaverCooldown(statePath string, until time.Time) error {
+	raw, err := json.Marshal(struct {
+		Until time.Time `json:"until"`
+	}{until})
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(statePath), ".naver-cooldown-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), statePath+".retry-after")
 }
 
 func validateB2CListingStateSource(path, source string) error {

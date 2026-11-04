@@ -242,8 +242,9 @@ func naverWait(ctx context.Context, delay time.Duration) error {
 
 func naverRetryAfter(raw string) time.Duration {
 	if seconds, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64); err == nil && seconds > 0 {
-		if seconds > int64((24*time.Hour)/time.Second) {
-			return 24 * time.Hour
+		const maxSeconds = int64(^uint64(0)>>1) / int64(time.Second)
+		if seconds > maxSeconds {
+			return time.Duration(maxSeconds) * time.Second
 		}
 		return time.Duration(seconds) * time.Second
 	}
@@ -367,7 +368,7 @@ func (n *NaverListingSource) parseArticles(payload map[string]any) []Listing {
 		out = append(out, Listing{
 			ID:           strFromAny(m["articleNo"]),
 			ComplexName:  firstNonEmpty(strFromAny(m["complexName"]), strFromAny(m["articleName"])),
-			TypeName:     firstNonEmpty(strFromAny(m["areaName"]), strFromAny(m["typeName"])),
+			TypeName:     strFromAny(m["areaName"]),
 			AskingManwon: parseManwon(firstNonEmpty(strFromAny(m["dealOrWarrantPrc"]), strFromAny(m["rentPrc"]))),
 			Floor:        parseFloor(strFromAny(m["floorInfo"])),
 			Lon:          floatFromAny(m["longitude"]), Lat: floatFromAny(m["latitude"]),
