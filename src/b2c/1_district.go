@@ -23,10 +23,12 @@ type Zone struct {
 
 // districtZones는 1차 구현 범위의 7개 구역이다. 동탄은 도로명주소만으로는 1/2를
 // 가를 수 없어 법정동으로 나눈다(법정동이 없으면 NearestZone으로 보조 판정).
+// 화성시는 2026-02-01 동탄구(41597)를 두었고, 2026-03-01 여울동(4159711500)이 새로 생겼다
+// (행정안전부 법정동코드 API로 확인). 현재 목록에 없는 오산동은 예전 주소를 읽으려고 남긴다.
 var districtZones = []Zone{
 	{Key: "songdo", Name: "인천 송도동", Within: []string{"인천", "연수구"}, Dongs: []string{"송도동"}, Center: [2]float64{126.6560, 37.3830}},
 	{Key: "dongtan1", Name: "1동탄", Within: []string{"화성"}, Dongs: []string{"반송동", "석우동", "능동"}, Center: [2]float64{127.0700, 37.2010}},
-	{Key: "dongtan2", Name: "2동탄", Within: []string{"화성"}, Dongs: []string{"영천동", "청계동", "오산동", "목동", "산척동", "장지동", "송동", "방교동", "중동", "신동", "금곡동"}, Center: [2]float64{127.1000, 37.1990}},
+	{Key: "dongtan2", Name: "2동탄", Within: []string{"화성"}, Dongs: []string{"영천동", "청계동", "오산동", "여울동", "목동", "산척동", "장지동", "송동", "방교동", "중동", "신동", "금곡동"}, Center: [2]float64{127.1000, 37.1990}},
 	{Key: "hanam", Name: "하남", Within: []string{"하남"}, Center: [2]float64{127.2060, 37.5390}},
 	{Key: "suji", Name: "용인 수지", Within: []string{"용인", "수지구"}, Center: [2]float64{127.0960, 37.3220}},
 	{Key: "suwon", Name: "수원", Within: []string{"수원"}, Center: [2]float64{127.0290, 37.2640}},
