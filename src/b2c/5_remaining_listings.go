@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -330,17 +331,37 @@ var ErrListingNotFound = errors.New("active listing not found for this registran
 func (s *ListingStore) Fetch(ctx context.Context) ([]Listing, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
-		       COALESCE(lon, 0), COALESCE(lat, 0)
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
 		FROM b2c_listings WHERE status = 'active'`)
 	if err != nil {
 		return nil, err
 	}
+	return scanListings(rows)
+}
+
+// Sold는 since 이후 팔린 직접 등록 매물이다. complexName이 비지 않으면 그 단지만.
+// LastSeen은 팔림으로 바뀐 시각이다.
+func (s *ListingStore) Sold(ctx context.Context, complexName string, since time.Time) ([]Listing, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
+		FROM b2c_listings
+		WHERE status = 'sold' AND updated_at >= $1 AND ($2 = '' OR complex_name = $2)
+		ORDER BY updated_at DESC`, since, complexName)
+	if err != nil {
+		return nil, err
+	}
+	return scanListings(rows)
+}
+
+func scanListings(rows pgx.Rows) ([]Listing, error) {
 	defer rows.Close()
 	var out []Listing
 	for rows.Next() {
 		var id int64
 		l := Listing{Source: DirectListingSourceName}
-		if err := rows.Scan(&id, &l.ComplexName, &l.TypeName, &l.AskingManwon, &l.Floor, &l.Lon, &l.Lat); err != nil {
+		if err := rows.Scan(&id, &l.ComplexName, &l.TypeName, &l.AskingManwon, &l.Floor, &l.Lon, &l.Lat,
+			&l.FirstSeen, &l.LastSeen); err != nil {
 			return nil, err
 		}
 		l.ID = strconv.FormatInt(id, 10)

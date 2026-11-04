@@ -14,13 +14,13 @@ import (
 
 // AptTrade는 아파트 매매 실거래 1건이다 (국토교통부 실거래가 공개 자료 기준).
 type AptTrade struct {
-	ComplexName string
-	DealDate    time.Time
-	PriceManwon int // 거래금액 (만원)
-	AreaM2      float64
-	Floor       int
-	BuildYear   int
-	Canceled    bool // 해제된 거래
+	ComplexName string    `json:"complex_name"`
+	DealDate    time.Time `json:"deal_date"`
+	PriceManwon int       `json:"price_manwon"` // 거래금액 (만원)
+	AreaM2      float64   `json:"area_m2"`
+	Floor       int       `json:"floor"`
+	BuildYear   int       `json:"build_year"`
+	Canceled    bool      `json:"canceled"` // 해제된 거래
 }
 
 // TradeSource는 실거래 원천이다. lawdCode는 시군구 5자리 법정동코드다.
@@ -44,20 +44,20 @@ const tradeWindow = 6
 
 // TradeActivity는 최근 6개월 거래 빈도 요약이다.
 type TradeActivity struct {
-	Count           int     // 해제 제외 거래 수
-	Canceled        int     // 해제 거래 수
-	AvgIntervalDays float64 // 거래 사이 평균 간격 (2건 이상일 때)
-	DaysSinceLast   int     // 마지막 거래 후 지난 날 (-1이면 거래 없음)
-	RecentHalf      int     // 최근 3개월 거래 수
-	EarlierHalf     int     // 그 전 3개월 거래 수
-	Level           Liveliness
+	Count           int        `json:"count"`             // 해제 제외 거래 수
+	Canceled        int        `json:"canceled"`          // 해제 거래 수
+	AvgIntervalDays float64    `json:"avg_interval_days"` // 거래 사이 평균 간격 (2건 이상일 때)
+	DaysSinceLast   int        `json:"days_since_last"`   // 마지막 거래 후 지난 날 (-1이면 거래 없음)
+	RecentHalf      int        `json:"recent_half"`       // 최근 3개월 거래 수
+	EarlierHalf     int        `json:"earlier_half"`      // 그 전 3개월 거래 수
+	Level           Liveliness `json:"level"`
 }
 
 // BuyerVerdict는 사람이 집을 고를 때 실제로 느끼는 감정을 따라 쓴 판단 문구다.
 type BuyerVerdict struct {
-	Level    Liveliness
-	Message  string
-	Cautions []string
+	Level    Liveliness `json:"level"`
+	Message  string     `json:"message"`
+	Cautions []string   `json:"cautions"`
 }
 
 // RecentTradeAnalyzer는 최근 실거래 빈도로 살아 있는 동네인지 판단한다.

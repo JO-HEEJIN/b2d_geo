@@ -59,6 +59,8 @@ func TestRequiredScope(t *testing.T) {
 		"/v1/parcel/4145010100":     "geo",
 		"/v1/appraisal/sales":       "realestate",
 		"/v1/appraisal/price-index": "realestate",
+		"/v1/b2c/infra":             "geo",
+		"/v1/b2c/write/listings":    "b2c_write",
 	}
 	for path, want := range cases {
 		if got := requiredScope(path); got != want {

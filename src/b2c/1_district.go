@@ -7,18 +7,18 @@ import (
 
 // Point는 지도 위 한 지점(아파트 단지, 매물 등)이다. 좌표는 WGS84 경위도.
 type Point struct {
-	Name string
-	Lon  float64
-	Lat  float64
+	Name string  `json:"name"`
+	Lon  float64 `json:"lon"`
+	Lat  float64 `json:"lat"`
 }
 
 // Zone은 B2C 1차 서비스 구역이다.
 type Zone struct {
-	Key    string     // 영문 식별자
-	Name   string     // 표시명
-	Within []string   // 주소에 모두 있어야 하는 시/구 (토큰 접두 일치)
-	Dongs  []string   // 법정동 목록. 비면 Within 전체가 구역이다
-	Center [2]float64 // 대략적인 구역 중심 (lon, lat). 주소가 없을 때 판정 보조용
+	Key    string     `json:"key"`    // 영문 식별자
+	Name   string     `json:"name"`   // 표시명
+	Within []string   `json:"within"` // 주소에 모두 있어야 하는 시/구 (토큰 접두 일치)
+	Dongs  []string   `json:"dongs"`  // 법정동 목록. 비면 Within 전체가 구역이다
+	Center [2]float64 `json:"center"` // 대략적인 구역 중심 (lon, lat). 주소가 없을 때 판정 보조용
 }
 
 // districtZones는 1차 구현 범위의 7개 구역이다. 동탄은 도로명주소만으로는 1/2를

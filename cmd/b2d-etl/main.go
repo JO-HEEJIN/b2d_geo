@@ -634,7 +634,7 @@ func runApikey(ctx context.Context, args []string) error {
 	}
 	fs := flag.NewFlagSet("apikey create", flag.ContinueOnError)
 	name := fs.String("name", "", "owner name (required)")
-	scopesCSV := fs.String("scopes", "geo", "comma-separated scopes: geo,realestate")
+	scopesCSV := fs.String("scopes", "geo", "comma-separated scopes: geo,realestate,b2c_write")
 	rate := fs.Int("rate", 10, "rate limit requests per second (>0)")
 	tier := fs.String("tier", "demo", "pricing tier: demo|standard")
 	monthlyCap := fs.Int64("monthly-cap", 0, "monthly call hard cap (0 = no cap)")
