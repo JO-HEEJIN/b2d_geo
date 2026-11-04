@@ -191,3 +191,14 @@ func TestParseListingsCSVEncodingAndHeader(t *testing.T) {
 		t.Error("expected row limit error")
 	}
 }
+
+func TestDailyCap(t *testing.T) {
+	c := &dailyCap{max: 2}
+	if !c.take() || !c.take() || c.take() {
+		t.Fatal("cap not enforced")
+	}
+	c.day = "2000-01-01" // 날짜가 바뀌면 다시 센다
+	if !c.take() {
+		t.Fatal("cap not reset on a new day")
+	}
+}

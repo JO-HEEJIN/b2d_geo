@@ -1,0 +1,107 @@
+/* 올맵 집 구경 (B2C). styles.css 토큰만 쓴다. 판단 색: hot = 호박색(가치·긴박), active = 옥색, slow = 중립. */
+
+.b2c-app { display: grid; grid-template-columns: 420px 1fr; height: calc(100vh - 56px); }
+.b2c-panel {
+  background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.b2c-head { padding: 18px 18px 14px; border-bottom: 1px solid var(--border); }
+.b2c-head h1 { margin: 0; font-size: 19px; letter-spacing: -.02em; color: var(--ink); }
+.b2c-head p { margin: 6px 0 0; font-size: 13px; color: var(--ink-3); line-height: 1.5; }
+.zone-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.zone-chips button {
+  font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink-2);
+}
+.zone-chips button:hover { background: var(--surface-2); color: var(--ink); }
+.zone-chips button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.b2c-body { flex: 1; overflow-y: auto; min-height: 0; }
+.b2c-empty, .b2c-loading, .b2c-error { padding: 40px 24px; text-align: center; color: var(--ink-3); font-size: 14px; line-height: 1.6; }
+.b2c-error { color: var(--warn); }
+
+.list-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 12px 18px; font-size: 12.5px; color: var(--ink-3);
+  border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); z-index: 2;
+}
+.list-head b { color: var(--ink); font-size: 14px; }
+.cx {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 10px;
+  width: 100%; text-align: left; font: inherit; cursor: pointer;
+  padding: 12px 18px; background: none; border: 0; border-bottom: 1px solid var(--border); color: var(--ink);
+}
+.cx:hover { background: var(--surface-2); }
+.cx-name { font-weight: 650; font-size: 14.5px; letter-spacing: -.01em; }
+.cx-sub { grid-column: 1; font-size: 12.5px; color: var(--ink-3); }
+.cx-price { text-align: right; font-weight: 650; font-size: 14px; color: var(--gold); font-variant-numeric: tabular-nums; }
+.cx-meta { text-align: right; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+.lvl { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; }
+.lvl.hot { background: var(--gold-soft); color: var(--gold); }
+.lvl.active { background: var(--accent-soft); color: var(--accent); }
+.lvl.slow, .lvl.dormant { background: var(--surface-3); color: var(--ink-2); }
+
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.dot.hot { background: var(--gold); }
+.dot.active { background: var(--accent); }
+.dot.slow { background: var(--neutral); }
+
+.b2c-map-wrap { position: relative; min-height: 0; }
+.b2c-map-wrap #map { position: absolute; inset: 0; }
+.map-legend {
+  position: absolute; left: 12px; bottom: 22px; z-index: 450;
+  display: flex; gap: 12px; padding: 7px 11px; font-size: 12px; color: var(--ink-2);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow);
+}
+
+/* ---- 단지 상세 ---- */
+.detail { padding: 0 0 28px; }
+.detail-top { padding: 14px 18px 12px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); z-index: 2; }
+.back { font: inherit; font-size: 13px; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.detail-top h2 { margin: 8px 0 2px; font-size: 18px; letter-spacing: -.02em; }
+.detail-top .sub { font-size: 12.5px; color: var(--ink-3); }
+.sec { padding: 16px 18px 4px; }
+.sec h3 { margin: 0 0 10px; font-size: 14px; color: var(--ink); letter-spacing: -.01em; }
+.sec h3 small { font-weight: 500; color: var(--ink-3); margin-left: 4px; }
+
+.verdict { border-radius: var(--radius); padding: 14px; background: var(--surface-2); border: 1px solid var(--border); }
+.verdict.hot { background: var(--gold-soft); border-color: transparent; }
+.verdict.active { background: var(--accent-soft); border-color: transparent; }
+.verdict .msg { font-size: 14px; line-height: 1.6; color: var(--ink); }
+.verdict ul { margin: 10px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); line-height: 1.55; }
+.disclaimer { margin-top: 8px; font-size: 11.5px; color: var(--ink-3); line-height: 1.5; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+.stat b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11.5px; color: var(--ink-3); }
+
+.walk { display: grid; grid-template-columns: 92px 1fr auto; gap: 6px 10px; align-items: baseline; font-size: 13.5px; }
+.walk .k { color: var(--ink-3); font-size: 12.5px; }
+.walk .min { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+.walk .none { color: var(--ink-3); font-size: 12.5px; }
+
+.types { display: flex; flex-wrap: wrap; gap: 6px; }
+.types button {
+  font: inherit; font-size: 13px; cursor: pointer; padding: 6px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink-2);
+}
+.types button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 650; }
+.type-box { margin-top: 10px; font-size: 13px; color: var(--ink-2); line-height: 1.55; }
+.type-box .units { color: var(--ink); }
+.type-box ol { margin: 8px 0 0; padding-left: 20px; }
+
+table.mini { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+table.mini td { padding: 6px 0; border-bottom: 1px solid var(--border); }
+table.mini td.r { text-align: right; }
+table.mini tr.cancel td { color: var(--ink-3); text-decoration: line-through; }
+.more { margin-top: 10px; width: 100%; }
+.muted { color: var(--ink-3); font-size: 12.5px; }
+
+@media (max-width: 860px) {
+  .b2c-app { grid-template-columns: 1fr; grid-template-rows: 42vh auto; height: auto; }
+  .b2c-map-wrap { order: -1; height: 42vh; }
+  .b2c-panel { border-right: 0; }
+  .b2c-body { overflow: visible; }
+}

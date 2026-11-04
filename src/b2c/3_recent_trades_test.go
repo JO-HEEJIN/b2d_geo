@@ -180,3 +180,27 @@ func TestMolitAptTradeSourcePaging(t *testing.T) {
 		t.Fatalf("pages=%d trades=%d", pages, len(got))
 	}
 }
+
+func TestComplexes(t *testing.T) {
+	a := fixedAnalyzer(nil)
+	mk := func(name, umd, jibun string, daysAgo, price int, canceled bool) AptTrade {
+		return AptTrade{ComplexName: name, SggCd: "41597", UmdNm: umd, Jibun: jibun, BuildYear: 2015,
+			DealDate: tradeNow.AddDate(0, 0, -daysAgo), PriceManwon: price, AreaM2: 84.9, Canceled: canceled}
+	}
+	trades := []AptTrade{
+		mk("A", "청계동", "1", 3, 100000, false), mk("A", "청계동", "1", 10, 99000, false), mk("A", "청계동", "1", 1, 101000, true),
+		mk("B", "청계동", "2", 5, 80000, false),
+		mk("C", "반송동", "3", 2, 70000, false), mk("C", "반송동", "3", 4, 70000, false), mk("C", "반송동", "3", 6, 70000, false),
+	}
+	z, _ := NewDistrictClassifier().Zone("dongtan2")
+	got := a.Complexes(trades, func(t AptTrade) bool { return z.InZone(t.UmdNm) })
+	if len(got) != 2 || got[0].Name != "A" || got[1].Name != "B" {
+		t.Fatalf("got = %+v", got)
+	}
+	if got[0].Activity.Count != 2 || got[0].Activity.Canceled != 1 || got[0].LatestPrice != 100000 || got[0].BuildYear != 2015 {
+		t.Errorf("A = %+v", got[0])
+	}
+	if all := a.Complexes(trades, nil); len(all) != 3 || all[0].Name != "C" {
+		t.Errorf("all = %+v", all)
+	}
+}
