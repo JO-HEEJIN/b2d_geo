@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -336,7 +337,7 @@ var ErrListingNotFound = errors.New("active listing not found for this registran
 func (s *ListingStore) Fetch(ctx context.Context) ([]Listing, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
-		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by
 		FROM b2c_listings WHERE status = 'active'`)
 	if err != nil {
 		return nil, err
@@ -378,7 +379,7 @@ func (s *ListingStore) Page(ctx context.Context, complexName string, limit, offs
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
-		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by
 		FROM b2c_listings
 		WHERE status = 'active' AND ($1 = '' OR complex_name = $1)
 		ORDER BY complex_name, asking_manwon, id
@@ -404,7 +405,7 @@ func (s *ListingStore) Page(ctx context.Context, complexName string, limit, offs
 func (s *ListingStore) Sold(ctx context.Context, complexName string, since time.Time) ([]Listing, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
-		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by
 		FROM b2c_listings
 		WHERE status = 'sold' AND updated_at >= $1 AND ($2 = '' OR complex_name = $2)
 		ORDER BY updated_at DESC
@@ -420,10 +421,14 @@ func scanListings(rows pgx.Rows) ([]Listing, error) {
 	var out []Listing
 	for rows.Next() {
 		var id int64
+		var by string
 		l := Listing{Source: DirectListingSourceName}
 		if err := rows.Scan(&id, &l.ComplexName, &l.TypeName, &l.AskingManwon, &l.Floor, &l.Lon, &l.Lat,
-			&l.FirstSeen, &l.LastSeen); err != nil {
+			&l.FirstSeen, &l.LastSeen, &by); err != nil {
 			return nil, err
+		}
+		if strings.HasPrefix(by, SampleRegistrantPrefix) {
+			l.Source = SampleListingSourceName
 		}
 		l.ID = strconv.FormatInt(id, 10)
 		out = append(out, l)
@@ -562,4 +567,58 @@ func (s *ListingStore) RegisterMany(ctx context.Context, listings []Listing, reg
 		return 0, err
 	}
 	return len(listings), nil
+}
+
+// 예시 매물: 매물 피드 계약 전 유저 테스트 화면을 채우려고 최근 실거래로 만든 가짜 매물이다.
+// 실제 매물이 아니므로 Source를 "sample"로 내보내고 화면에 "예시"라고 표시한다. PurgeSamples로 한 번에 지운다.
+const (
+	SampleListingSourceName = "sample"
+	SampleRegistrantPrefix  = "sample:"
+	sampleMarkup            = 1.03 // 호가는 보통 실거래가보다 조금 높다
+)
+
+// SampleListings는 단지마다 최근 (해제 아닌) 거래 최대 perComplex건으로 예시 매물을 만든다.
+// 호가 = 실거래가 x 1.03을 100만원 단위로 올림, 층은 그 거래의 층, 타입 칸에는 전용면적을 적는다.
+// 같은 입력이면 같은 결과다(무작위 없음).
+func SampleListings(trades []AptTrade, keep func(AptTrade) bool, perComplex int) []Listing {
+	byComplex := map[string][]AptTrade{}
+	var order []string
+	for _, t := range trades {
+		if t.Canceled || (keep != nil && !keep(t)) {
+			continue
+		}
+		if _, ok := byComplex[t.ComplexName]; !ok {
+			order = append(order, t.ComplexName)
+		}
+		byComplex[t.ComplexName] = append(byComplex[t.ComplexName], t)
+	}
+	sort.Strings(order)
+	var out []Listing
+	for _, name := range order {
+		g := byComplex[name]
+		sort.Slice(g, func(i, j int) bool { return g[i].DealDate.After(g[j].DealDate) })
+		for i := 0; i < len(g) && i < perComplex; i++ {
+			price := int(math.Ceil(float64(g[i].PriceManwon)*sampleMarkup/100) * 100)
+			out = append(out, Listing{
+				ComplexName:  name,
+				TypeName:     fmt.Sprintf("전용 %.2f㎡", g[i].AreaM2),
+				AskingManwon: price,
+				Floor:        g[i].Floor,
+			})
+		}
+	}
+	return out
+}
+
+// PurgeSamples는 예시 매물을 모두 지운다. zone이 비지 않으면 그 구역 것만. 지운 행 수를 돌려준다.
+func (s *ListingStore) PurgeSamples(ctx context.Context, zone string) (int64, error) {
+	pattern := SampleRegistrantPrefix + "%"
+	if zone != "" {
+		pattern = SampleRegistrantPrefix + zone
+	}
+	ct, err := s.pool.Exec(ctx, `DELETE FROM b2c_listings WHERE registered_by LIKE $1`, pattern)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
 }

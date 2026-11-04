@@ -30,6 +30,7 @@ type Handler struct {
 	dongs     *LegalDongResolver
 	locator   *ComplexLocator
 	autoPlans *dailyCap
+	building  inflight
 	listings  *ListingStore
 	mux       *http.ServeMux
 }
@@ -170,7 +171,14 @@ func (h *Handler) floorPlans(w http.ResponseWriter, r *http.Request) {
 	for _, v := range variants {
 		checklists[v.TypeName] = c.ViewingChecklist(v)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"complex_id": id, "variants": variants, "tour": tour, "checklists": checklists})
+	status := "ready"
+	if len(variants) == 0 {
+		status = "none"
+		if h.building.running(id) {
+			status = "building"
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"complex_id": id, "status": status, "variants": variants, "tour": tour, "checklists": checklists})
 }
 
 // remainingListings: ?complex=&limit=&offset=  남은 매물(페이지)과 최근 7일 팔린 매물.
@@ -463,26 +471,20 @@ func (h *Handler) complexDetail(w http.ResponseWriter, r *http.Request) {
 			log.Printf("b2c complex infra: %v", err)
 		}
 		catalog, err := h.plans.Catalog(r.Context(), p.ComplexID)
-		if err == nil && len(catalog.Variants(p.ComplexID)) == 0 && h.register.Key != "" && h.autoPlans.take() {
-			if units, err := h.register.Units(r.Context(), p.PNU[:5], p.PNU[5:10], p.PNU[11:15], p.PNU[15:19]); err == nil {
-				if _, err := h.plans.SaveCandidates(r.Context(), catalog.CandidatesFromUnits(p.ComplexID, units)); err != nil {
-					log.Printf("b2c auto floor plans save: %v", err)
-				}
-				catalog, err = h.plans.Catalog(r.Context(), p.ComplexID)
-			} else {
-				log.Printf("b2c auto floor plans %s: %v", p.ComplexID, err)
-			}
-		}
 		if err == nil {
 			variants := catalog.Variants(p.ComplexID)
+			status := "ready"
+			if len(variants) == 0 {
+				status = h.startFloorPlans(*p)
+				variants = []FloorPlanVariant{}
+			}
 			checklists := map[string][]string{}
 			for _, v := range variants {
 				checklists[v.TypeName] = catalog.ViewingChecklist(v)
 			}
-			if variants == nil {
-				variants = []FloorPlanVariant{}
-			}
-			resp["floor_plans"] = map[string]any{"complex_id": p.ComplexID, "variants": variants, "checklists": checklists}
+			resp["floor_plans"] = map[string]any{"complex_id": p.ComplexID, "status": status, "variants": variants, "checklists": checklists}
+		} else {
+			log.Printf("b2c complex floor plans: %v", err)
 		}
 	}
 
@@ -496,6 +498,66 @@ func (h *Handler) complexDetail(w http.ResponseWriter, r *http.Request) {
 		resp["recently_sold"] = sold
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// inflight는 지금 백그라운드에서 만들고 있는 단지 ID 집합이다.
+type inflight struct {
+	mu  sync.Mutex
+	ids map[string]bool
+}
+
+func (f *inflight) start(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ids == nil {
+		f.ids = map[string]bool{}
+	}
+	if f.ids[id] {
+		return false
+	}
+	f.ids[id] = true
+	return true
+}
+
+func (f *inflight) done(id string) {
+	f.mu.Lock()
+	delete(f.ids, id)
+	f.mu.Unlock()
+}
+
+func (f *inflight) running(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ids[id]
+}
+
+// startFloorPlans는 평면 후보가 없는 단지의 건축물대장 조회를 백그라운드로 시작하고 상태를 돌려준다.
+// "building": 만드는 중(화면이 /v1/b2c/floor-plans를 다시 부른다), "none": 키가 없거나 오늘 한도를 다 썼다.
+// 건축물대장은 한 단지에 수십 페이지라 첫 요청이 30초 걸렸다(실측). 응답을 붙잡지 않으려고 분리한다.
+func (h *Handler) startFloorPlans(p ComplexPlace) string {
+	if h.building.running(p.ComplexID) {
+		return "building"
+	}
+	if h.register.Key == "" || !h.autoPlans.take() {
+		return "none"
+	}
+	if !h.building.start(p.ComplexID) {
+		return "building"
+	}
+	go func() {
+		defer h.building.done(p.ComplexID)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		units, err := h.register.Units(ctx, p.PNU[:5], p.PNU[5:10], p.PNU[11:15], p.PNU[15:19])
+		if err != nil {
+			log.Printf("b2c auto floor plans %s: %v", p.ComplexID, err)
+			return
+		}
+		if _, err := h.plans.SaveCandidates(ctx, NewFloorPlanCatalog().CandidatesFromUnits(p.ComplexID, units)); err != nil {
+			log.Printf("b2c auto floor plans save %s: %v", p.ComplexID, err)
+		}
+	}()
+	return "building"
 }
 
 func firstN(t []AptTrade, n int) []AptTrade {

@@ -35,7 +35,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|transit-subway|b2c-floor-plans|b2c-listings|b2c-listings-import|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|transit-subway|b2c-floor-plans|b2c-listings|b2c-listings-import|b2c-listings-sample|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -132,6 +132,11 @@ func main() {
 	case "b2c-floor-plans":
 		if err := runB2CFloorPlans(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "b2c-floor-plans failed:", err)
+			os.Exit(1)
+		}
+	case "b2c-listings-sample":
+		if err := runB2CListingsSample(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "b2c-listings-sample failed:", err)
 			os.Exit(1)
 		}
 	case "b2c-listings-import":
@@ -287,8 +292,22 @@ func runB2CFloorPlans(ctx context.Context, args []string) error {
 	bjdong := fs.String("bjdong", "", "법정동코드 뒤 5자리 (예: 11500)")
 	bun := fs.String("bun", "", "번 4자리 (예: 0964)")
 	ji := fs.String("ji", "0000", "지 4자리")
+	reset := fs.Bool("reset-auto", false, "건축물대장 자동 후보를 모두 지운다(사람이 등록한 타입은 남김). 다음 단지 조회 때 새 이름 규칙으로 다시 만든다")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *reset {
+		pool, err := pgxpool.New(ctx, dbDSN())
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		n, err := b2c.NewFloorPlanStore(pool).ResetCandidates(ctx, "")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("b2c-floor-plans: reset auto candidates=%d\n", n)
+		return nil
 	}
 	if len(*sigungu) != 5 || len(*bjdong) != 5 || len(*bun) != 4 || len(*ji) != 4 {
 		return fmt.Errorf("usage: b2d-etl b2c-floor-plans --sigungu 41597 --bjdong 11500 --bun 0964 [--ji 0000]")
@@ -316,6 +335,63 @@ func runB2CFloorPlans(ctx context.Context, args []string) error {
 	fmt.Printf("b2c-floor-plans: complex_id=%s name=%q units=%d candidates=%d inserted=%d\n", id, name, len(units), len(candidates), inserted)
 	for _, c := range candidates {
 		fmt.Printf("  %s  %d세대\n", c.TypeName, len(c.Units))
+	}
+	return nil
+}
+
+// runB2CListingsSample은 구역의 최근 실거래로 유저 테스트용 예시 매물을 만든다(registered_by = sample:<구역>).
+// 같은 구역의 예시 매물을 먼저 지우고 다시 넣으므로 재실행해도 쌓이지 않는다. --purge면 지우기만 한다.
+func runB2CListingsSample(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("b2c-listings-sample", flag.ContinueOnError)
+	zoneKey := fs.String("zone", "", "구역 키 (songdo, dongtan1, ...) 또는 all")
+	per := fs.Int("per-complex", 3, "단지당 예시 매물 수")
+	purge := fs.Bool("purge", false, "예시 매물을 지우기만 한다")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *zoneKey == "" || *per < 1 || *per > 20 {
+		return fmt.Errorf("usage: b2d-etl b2c-listings-sample --zone <key|all> [--per-complex 3] [--purge]")
+	}
+	districts := b2c.NewDistrictClassifier()
+	zones := districts.Zones()
+	if *zoneKey != "all" {
+		z, ok := districts.Zone(*zoneKey)
+		if !ok {
+			return fmt.Errorf("unknown zone %q", *zoneKey)
+		}
+		zones = []b2c.Zone{z}
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	store := b2c.NewListingStore(pool)
+	analyzer := b2c.NewRecentTradeAnalyzer(&b2c.MolitAptTradeSource{Key: os.Getenv("MOLIT_API_KEY")})
+	for _, z := range zones {
+		removed, err := store.PurgeSamples(ctx, z.Key)
+		if err != nil {
+			return err
+		}
+		if *purge {
+			fmt.Printf("b2c-listings-sample: zone=%s purged=%d\n", z.Key, removed)
+			continue
+		}
+		var trades []b2c.AptTrade
+		for _, lawd := range z.Lawd {
+			t, err := analyzer.Fetch(ctx, lawd)
+			if err != nil {
+				return err
+			}
+			trades = append(trades, t...)
+		}
+		zone := z
+		samples := b2c.SampleListings(trades, func(t b2c.AptTrade) bool { return zone.InZone(t.UmdNm) }, *per)
+		n, err := store.RegisterMany(ctx, samples, b2c.SampleRegistrantPrefix+z.Key)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("b2c-listings-sample: zone=%s replaced=%d inserted=%d\n", z.Key, removed, n)
 	}
 	return nil
 }

@@ -84,7 +84,7 @@ func TestCandidatesFromUnits(t *testing.T) {
 	for _, v := range got {
 		names = append(names, v.TypeName)
 	}
-	want := []string{"59㎡ 03라인", "84㎡ 01라인", "84㎡ 02라인"}
+	want := []string{"59.98㎡ 03라인", "84.90㎡ 01라인", "84.90㎡ 02라인"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("names = %v", names)
 	}
@@ -160,5 +160,18 @@ func TestBuildingRegisterSourcePaging(t *testing.T) {
 	}
 	if calls != 2 || len(units) != 2 || units[1].Ho != "102" {
 		t.Fatalf("calls=%d units=%+v", calls, units)
+	}
+}
+
+func TestCandidateNamesFollowSortOrder(t *testing.T) {
+	got := NewFloorPlanCatalog().CandidatesFromUnits("c", []RegisteredUnit{
+		{Dong: "1동", Ho: "101", AreaM2: 59.98}, {Dong: "1동", Ho: "102", AreaM2: 59.95}, {Dong: "1동", Ho: "103", AreaM2: 59.95},
+	})
+	var names []string
+	for _, v := range got {
+		names = append(names, v.TypeName)
+	}
+	if strings.Join(names, ",") != "59.95㎡ 02라인,59.95㎡ 03라인,59.98㎡ 01라인" {
+		t.Fatalf("names = %v", names)
 	}
 }
