@@ -24,6 +24,7 @@ type Handler struct {
 	trades    *RecentTradeAnalyzer
 	infra     *InfraMap
 	plans     *FloorPlanStore
+	register  *BuildingRegisterSource
 	listings  *ListingStore
 	mux       *http.ServeMux
 }
@@ -40,6 +41,7 @@ func NewHandler(pool *pgxpool.Pool, molitKey string) *Handler {
 		trades:    NewRecentTradeAnalyzer(src),
 		infra:     NewInfraMapFromDB(pool),
 		plans:     NewFloorPlanStore(pool),
+		register:  &BuildingRegisterSource{Key: molitKey},
 		listings:  NewListingStore(pool),
 		mux:       http.NewServeMux(),
 	}
@@ -51,6 +53,7 @@ func NewHandler(pool *pgxpool.Pool, molitKey string) *Handler {
 	h.mux.HandleFunc("GET /v1/b2c/floor-plans", h.floorPlans)
 	h.mux.HandleFunc("GET /v1/b2c/listings", h.remainingListings)
 	h.mux.HandleFunc("POST /v1/b2c/write/floor-plans", h.saveFloorPlan)
+	h.mux.HandleFunc("POST /v1/b2c/write/floor-plans/from-register", h.floorPlansFromRegister)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings", h.registerListing)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings/{id}/close", h.closeListing)
 	return h
@@ -213,6 +216,52 @@ func (h *Handler) saveFloorPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"saved": true, "complex_id": v.ComplexID, "type_name": v.TypeName})
+}
+
+// floorPlansFromRegister는 건축물대장 전유부로 단지의 평면 후보를 만들어 저장한다.
+// 단지 하나가 data.go.kr 수십 번 호출이라 등록 권한(b2c_write)이 있는 키만 부른다.
+func (h *Handler) floorPlansFromRegister(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SigunguCd string `json:"sigungu_cd"`
+		BjdongCd  string `json:"bjdong_cd"`
+		Bun       string `json:"bun"`
+		Ji        string `json:"ji"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if len(body.SigunguCd) != 5 || len(body.BjdongCd) != 5 || len(body.Bun) != 4 || len(body.Ji) != 4 ||
+		!digits(body.SigunguCd+body.BjdongCd+body.Bun+body.Ji) {
+		writeErr(w, http.StatusBadRequest, "sigungu_cd(5), bjdong_cd(5), bun(4), ji(4) digits required")
+		return
+	}
+	if h.register.Key == "" {
+		writeErr(w, http.StatusServiceUnavailable, "data.go.kr key not set: building register disabled")
+		return
+	}
+	units, err := h.register.Units(r.Context(), body.SigunguCd, body.BjdongCd, body.Bun, body.Ji)
+	if err != nil {
+		log.Printf("b2c building register: %v", err)
+		writeErr(w, http.StatusBadGateway, "upstream unavailable")
+		return
+	}
+	id := ParcelComplexID(body.SigunguCd, body.BjdongCd, body.Bun, body.Ji)
+	candidates := NewFloorPlanCatalog().CandidatesFromUnits(id, units)
+	inserted, err := h.plans.SaveCandidates(r.Context(), candidates)
+	if err != nil {
+		log.Printf("b2c save candidates: %v", err)
+		writeErr(w, http.StatusInternalServerError, "save failed")
+		return
+	}
+	name := ""
+	if len(units) > 0 {
+		name = units[0].BuildingName
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"complex_id": id, "building_name": name, "units": len(units),
+		"candidates": len(candidates), "inserted": inserted,
+		"source": "건축HUB 건축물대장 전유공용면적 (BldRgstHubService)",
+	})
 }
 
 func (h *Handler) registerListing(w http.ResponseWriter, r *http.Request) {
