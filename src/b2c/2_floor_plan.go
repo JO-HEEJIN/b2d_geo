@@ -2,9 +2,16 @@ package b2c
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -210,4 +217,195 @@ func (s *FloorPlanStore) Catalog(ctx context.Context, complexID string) (*FloorP
 		c.AddVariant(v)
 	}
 	return c, rows.Err()
+}
+
+// RegisteredUnit은 건축물대장 전유부의 아파트 세대 1개다.
+type RegisteredUnit struct {
+	BuildingName string  `json:"building_name"`
+	Dong         string  `json:"dong"` // 예: "1622동"
+	Ho           string  `json:"ho"`   // 예: "102"
+	Floor        int     `json:"floor"`
+	AreaM2       float64 `json:"area_m2"` // 전용면적
+}
+
+// buildingRegisterURL은 국토교통부 건축HUB 건축물대장 전유공용면적 API다.
+const buildingRegisterURL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrExposPubuseAreaInfo"
+
+// buildingRegisterPageRows는 이 API가 한 페이지에 주는 최대 행 수다(1000을 넣어도 100행만 온다, 2026-11-04 실측).
+const buildingRegisterPageRows = 100
+
+// BuildingRegisterSource는 건축물대장 전유부에서 단지의 세대 목록을 읽는다.
+// Key는 data.go.kr 일반 인증키(Decoding)이며 MOLIT_API_KEY와 같은 계정 키다.
+type BuildingRegisterSource struct {
+	Key     string
+	Client  *http.Client
+	BaseURL string // 비면 buildingRegisterURL. 테스트에서 바꾼다
+}
+
+type bldItem struct {
+	BldNm           string `xml:"bldNm"`
+	DongNm          string `xml:"dongNm"`
+	HoNm            string `xml:"hoNm"`
+	FlrNo           string `xml:"flrNo"`
+	ExposPubuseGbCd string `xml:"exposPubuseGbCd"` // 1 전유, 2 공용
+	MainPurpsCdNm   string `xml:"mainPurpsCdNm"`
+	Area            string `xml:"area"`
+}
+
+type bldResp struct {
+	Header struct {
+		ResultCode string `xml:"resultCode"`
+		ResultMsg  string `xml:"resultMsg"`
+	} `xml:"header"`
+	Body struct {
+		Items      []bldItem `xml:"items>item"`
+		TotalCount int       `xml:"totalCount"`
+	} `xml:"body"`
+}
+
+// Units는 필지(시군구·법정동 코드, 번·지)의 아파트 전유 세대를 모두 읽는다. 공용 면적 행과
+// 아파트가 아닌 용도는 버린다. 한 단지가 수천 행이라 페이지를 끝까지 넘긴다.
+func (s *BuildingRegisterSource) Units(ctx context.Context, sigunguCd, bjdongCd, bun, ji string) ([]RegisteredUnit, error) {
+	if s.Key == "" {
+		return nil, fmt.Errorf("data.go.kr key not set")
+	}
+	base := s.BaseURL
+	if base == "" {
+		base = buildingRegisterURL
+	}
+	client := s.Client
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	seen := map[string]bool{}
+	var out []RegisteredUnit
+	for page := 1; ; page++ {
+		u := fmt.Sprintf("%s?serviceKey=%s&sigunguCd=%s&bjdongCd=%s&bun=%s&ji=%s&numOfRows=%d&pageNo=%d",
+			base, url.QueryEscape(s.Key), sigunguCd, bjdongCd, bun, ji, buildingRegisterPageRows, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			// url.Error는 요청 URL(키 포함)을 담으므로 그대로 올리지 않는다.
+			return nil, fmt.Errorf("building register %s%s %s-%s: request failed", sigunguCd, bjdongCd, bun, ji)
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		var br bldResp
+		if err := xml.Unmarshal(body, &br); err != nil || br.Header.ResultCode != "00" {
+			return nil, fmt.Errorf("building register %s%s %s-%s: http %d resultCode=%q msg=%q",
+				sigunguCd, bjdongCd, bun, ji, resp.StatusCode, br.Header.ResultCode, br.Header.ResultMsg)
+		}
+		for _, it := range br.Body.Items {
+			if it.ExposPubuseGbCd != "1" || it.MainPurpsCdNm != "아파트" {
+				continue
+			}
+			area, err := strconv.ParseFloat(strings.TrimSpace(it.Area), 64)
+			if err != nil || area <= 0 {
+				continue
+			}
+			unit := RegisteredUnit{
+				BuildingName: strings.TrimSpace(it.BldNm),
+				Dong:         strings.TrimSpace(it.DongNm),
+				Ho:           strings.TrimSpace(it.HoNm),
+				AreaM2:       math.Round(area*100) / 100,
+			}
+			unit.Floor, _ = strconv.Atoi(strings.TrimSpace(it.FlrNo))
+			key := unit.Dong + "|" + unit.Ho
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, unit)
+		}
+		if len(br.Body.Items) < buildingRegisterPageRows || page*buildingRegisterPageRows >= br.Body.TotalCount {
+			return out, nil
+		}
+	}
+}
+
+// CandidatesFromUnits는 건축물대장 세대 목록에서 평면 타입 후보를 만든다.
+// 같은 전용면적이어도 라인(호수 끝 두 자리)마다 구조가 다르므로 (전용면적, 라인)으로 묶는다.
+// 실측(동탄 여울동 964): 538세대가 모두 84.9㎡라 면적만으로는 타입이 1개뿐이었고, 라인은 01~06이었다.
+// 후보는 화장실 위치·거실 구조를 모른다. 사람이 직접 보고 채우거나 같은 구조의 라인을 합친다.
+// 후보 이름은 "84㎡ 01라인"이고, 면적·라인 순으로 정렬한다. 줄이지 않고 전부 돌려준다.
+func (c *FloorPlanCatalog) CandidatesFromUnits(complexID string, units []RegisteredUnit) []FloorPlanVariant {
+	type key struct {
+		area float64
+		line string
+	}
+	groups := map[key][]RegisteredUnit{}
+	for _, u := range units {
+		line := u.Ho
+		if len(line) > 2 {
+			line = line[len(line)-2:]
+		}
+		k := key{u.AreaM2, line}
+		groups[k] = append(groups[k], u)
+	}
+	keys := make([]key, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].area != keys[j].area {
+			return keys[i].area < keys[j].area
+		}
+		return keys[i].line < keys[j].line
+	})
+	out := make([]FloorPlanVariant, 0, len(keys))
+	for _, k := range keys {
+		g := groups[k]
+		sort.Slice(g, func(i, j int) bool {
+			if g[i].Dong != g[j].Dong {
+				return g[i].Dong < g[j].Dong
+			}
+			return g[i].Floor < g[j].Floor
+		})
+		v := FloorPlanVariant{
+			ComplexID:       complexID,
+			TypeName:        fmt.Sprintf("%d㎡ %s라인", int(k.area), k.line),
+			ExclusiveAreaM2: k.area,
+		}
+		for _, u := range g {
+			v.Units = append(v.Units, u.Dong+" "+u.Ho+"호")
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// BuildingRegisterRegistrant는 건축물대장에서 자동으로 만든 후보의 registered_by 값이다.
+const BuildingRegisterRegistrant = "building_register"
+
+// SaveCandidates는 후보를 저장하되, 같은 단지·타입이 이미 있으면 건드리지 않는다.
+// 사람이 채운 화장실 위치·거실 구조를 자동 후보가 덮어쓰지 않게 하려는 것이다. 새로 넣은 수를 돌려준다.
+func (s *FloorPlanStore) SaveCandidates(ctx context.Context, candidates []FloorPlanVariant) (int, error) {
+	inserted := 0
+	for _, v := range candidates {
+		units := v.Units
+		if units == nil {
+			units = []string{}
+		}
+		ct, err := s.pool.Exec(ctx, `
+			INSERT INTO b2c_floor_plans (complex_id, type_name, exclusive_area_m2, units, registered_by)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (complex_id, type_name) DO NOTHING`,
+			v.ComplexID, v.TypeName, v.ExclusiveAreaM2, units, BuildingRegisterRegistrant)
+		if err != nil {
+			return inserted, err
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	return inserted, nil
+}
+
+// ParcelComplexID는 필지 코드로 단지 ID를 만든다. 예: "4159711500-0964-0000".
+func ParcelComplexID(sigunguCd, bjdongCd, bun, ji string) string {
+	return sigunguCd + bjdongCd + "-" + bun + "-" + ji
 }
