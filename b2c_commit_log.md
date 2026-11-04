@@ -692,3 +692,53 @@ Until now B2C existed only as an API (`/v1/b2c/*`), so there was no page a non-d
 - **Not run locally:** the dev machine is out of memory for Docker, so there was no local PostGIS. As agreed, the page is checked in production right after deploy.
 
 
+## 20. `feat/b2c-page-polish` ([#42](https://github.com/JO-HEEJIN/b2d_geo/pull/42))
+
+### 커밋
+
+- `6e51a32` feat(b2c): build floor plans in the background, align type names, add sample listings
+
+  Opening a complex no longer waits about 30 seconds for the building
+  register: candidates are built in the background and the page polls
+  until they appear. Candidate names now show the exclusive area to two
+  decimals so the visible order matches the sort order.
+  
+  Until a listing feed exists, user tests can fill remaining listings
+  with sample listings made from each complex's recent trades (price plus
+  3 percent). They are returned with source "sample", labeled on the page
+  as not real, and removed with one command.
+
+### Description
+
+#### 1. First visit to a complex no longer waits 30 s
+- Building floor plan candidates from the building register was measured at about 30 s, because one complex is dozens of pages. It now runs in the background.
+- `floor_plans.status` is one of:
+  - `ready`
+  - `building`: the page asks `/v1/b2c/floor-plans` again every 5 s, for up to 2 minutes
+  - `none`: no key, or today's limit is used up
+- A complex already being built is not started a second time. The daily limit (40 complexes) is unchanged.
+
+#### 2. Floor plan type names
+- The old names showed whole square meters ("59㎡ 02라인"), but sorting used the exact area, so 02라인 could appear before 01라인.
+- New names show the area to two decimals ("59.95㎡ 02라인"), so the visible order matches the sort.
+- `FloorPlanStore.ResetCandidates` and `b2d-etl b2c-floor-plans --reset-auto` delete only the automatic candidates (`registered_by = building_register`). Types a person registered stay.
+
+#### 3. Sample listings (until a listing feed exists)
+- `SampleListings` takes each complex's latest non-canceled trades (3 by default):
+  - Asking price = trade price × 1.03, rounded up to the nearest 1,000,000 won.
+  - Floor comes from that trade.
+  - The type column shows the exclusive area.
+  - Same input always gives the same output.
+- `b2d-etl b2c-listings-sample --zone <key|all> [--per-complex 3] [--purge]`. Stored with `registered_by = sample:<zone>`. Each run replaces the zone's samples, so rows do not pile up.
+- The API returns them with `source = "sample"`. **The page labels every sample row "예시"** and adds a note that these are not real listings: test listings made from recent trade price + 3%.
+- Naver Land is still not collected (robots.txt `Disallow: /`, directive 1.1, ADR 0002).
+
+#### Verification
+- Unit tests:
+  - Candidate names follow sort order (59.95/02, 59.95/03, 59.98/01).
+  - Sample listings skip canceled trades, keep the most recent first, cap per complex and round the price.
+  - Existing tests updated for the new names.
+- PostGIS tests (written; Docker is off locally): samples come back with `source = sample` and `PurgeSamples` removes them.
+- `go vet ./...`, `go build ./...`, `node --check web/public/b2c.js`, web embed tests.
+
+

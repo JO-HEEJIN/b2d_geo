@@ -119,7 +119,7 @@
 | 4 버스 | 국토부 전국 버스정류장 위치정보 CSV | 적재 명령 `b2d-etl transit-bus` |
 | 4 지하철 | 전국도시철도역사정보표준데이터 XLSX | 적재 명령 `b2d-etl transit-subway` (동탄역 SRT·GTX-A 없음) |
 | 4 편의점·병원 | 소상공인 상가정보 (`places`) | 사용 중 |
-| 5 매물 | `b2c_listings` (중개사·집주인 직접 등록, 테스트용 CSV 일괄 등록) | 사용 중. 계약 피드는 사업 협의. 네이버 부동산은 robots.txt `Disallow: /`라 자동 수집하지 않는다 |
+| 5 매물 | `b2c_listings` (중개사·집주인 직접 등록, 테스트용 CSV 일괄 등록, 실거래 기반 예시 매물 `b2c-listings-sample`) | 사용 중. 계약 피드는 사업 협의. 네이버 부동산은 robots.txt `Disallow: /`라 자동 수집하지 않는다 |
 
 ## 테스트 매물 CSV
 
