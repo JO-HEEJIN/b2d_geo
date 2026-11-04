@@ -38,12 +38,12 @@ const tradeWindow = 6
 
 // TradeActivity는 최근 6개월 거래 빈도 요약이다.
 type TradeActivity struct {
-	Count           int        // 해제 제외 거래 수
-	Canceled        int        // 해제 거래 수
-	AvgIntervalDays float64    // 거래 사이 평균 간격 (2건 이상일 때)
-	DaysSinceLast   int        // 마지막 거래 후 지난 날 (-1이면 거래 없음)
-	RecentHalf      int        // 최근 3개월 거래 수
-	EarlierHalf     int        // 그 전 3개월 거래 수
+	Count           int     // 해제 제외 거래 수
+	Canceled        int     // 해제 거래 수
+	AvgIntervalDays float64 // 거래 사이 평균 간격 (2건 이상일 때)
+	DaysSinceLast   int     // 마지막 거래 후 지난 날 (-1이면 거래 없음)
+	RecentHalf      int     // 최근 3개월 거래 수
+	EarlierHalf     int     // 그 전 3개월 거래 수
 	Level           Liveliness
 }
 
