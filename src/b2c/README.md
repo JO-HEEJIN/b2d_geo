@@ -88,6 +88,32 @@
 네이버를 이기는 방법은 네이버 데이터를 긁는 것이 아니다. 매물 원천은 이용 계약이 있는
 피드나 중개사·집주인의 직접 등록만 쓴다 (지시서 1.1, ADR 0002).
 
+## API
+
+읽기는 `geo` scope, 등록은 `b2c_write` scope 키가 필요하다 (`b2d-etl apikey create --scopes geo,b2c_write`).
+
+| 방법 | 경로 | 모듈 |
+|---|---|---|
+| GET | `/v1/b2c/keywords` | 키워드 사전 |
+| GET | `/v1/b2c/districts`, `/v1/b2c/district?address=` 또는 `?lon=&lat=` | 1 |
+| GET | `/v1/b2c/floor-plans?complex_id=` | 2 |
+| GET | `/v1/b2c/trades?lawd_cd=&complex=&build_year=` | 3 |
+| GET | `/v1/b2c/infra?lon=&lat=` | 4 |
+| GET | `/v1/b2c/listings?complex=` | 5 |
+| POST | `/v1/b2c/write/floor-plans` | 2 등록 |
+| POST | `/v1/b2c/write/listings`, `/v1/b2c/write/listings/{id}/close` | 5 등록·팔림 |
+
+## 데이터 원천
+
+| 모듈 | 원천 | 상태 |
+|---|---|---|
+| 2 평면 | `b2c_floor_plans` (직접 등록) | 사용 중. 건축물대장 전유부 자동 후보는 키 확인 후 |
+| 3 실거래 | 국토부 아파트 매매 실거래 API | 코드 완료. 실키 1회 확인 남음 |
+| 4 버스 | 국토부 전국 버스정류장 위치정보 CSV | 적재 명령 `b2d-etl transit-bus` |
+| 4 지하철 | 국가철도공단 도시광역철도 역사정보 XLSX | 파일 수동 다운로드 후 로더 작성 |
+| 4 편의점·병원 | 소상공인 상가정보 (`places`) | 사용 중 |
+| 5 매물 | `b2c_listings` (중개사·집주인 직접 등록) | 사용 중. 계약 피드는 사업 협의 |
+
 ## 데이터 규칙
 
 - 네이버, 카카오 등 상용 서비스 스크레이핑 금지. 크롤러 코드도 작성하지 않는다.
@@ -104,4 +130,7 @@
 
 ```sh
 go test ./src/b2c
+B2D_TEST_DATABASE_URL=postgres://b2d:b2d_local_dev@localhost:5433/b2d_geo go test ./src/b2c   # PostGIS 테스트 포함
+b2d-etl transit-bus --version 2026-10-20 <버스정류장.csv>
+b2d-etl b2c-listings --state /state/listings.json      # 남은 매물 1회 갱신 (--print-units: systemd 유닛 출력)
 ```

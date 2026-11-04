@@ -210,3 +210,204 @@ Listings sell very fast, so buyers need to see what is still left right now. Nav
 `go test -race ./src/b2c`: added/gone tracking, first-seen preservation, state kept on fetch error, state file round trip, and unit file contents all pass. The local machine is macOS, so `systemd-analyze verify` has not been run yet. Run it on the server before enabling the timer.
 
 
+## 7. `feat/b2c-molit-apt-trades` ([#21](https://github.com/JO-HEEJIN/b2d_geo/pull/21))
+
+### 커밋
+
+- `c806d78` feat(b2c): read apartment trades from the MOLIT trade API
+
+  Adds a TradeSource backed by RTMSDataSvcAptTrade. Months are fetched one
+  by one with paging up to totalCount, prices like "98,500" are parsed into
+  manwon, and cdealType "O" marks a canceled trade. Error messages never
+  carry the service key.
+  
+  Refs #16
+
+### Description
+
+Refs #16 (module 3 `recent_trades`)
+
+#### What it does
+`MolitAptTradeSource` implements `TradeSource` using the MOLIT apartment trade API (`RTMSDataSvcAptTrade`, data.go.kr 15126469).
+- Fetches each month in the range, paging through `totalCount` when a busy district has more than 1,000 trades in a month.
+- Parses `aptNm`, `dealAmount` (thousand separators and spaces removed), `dealYear/Month/Day`, `excluUseAr`, `floor` and `buildYear`. `cdealType = "O"` marks a canceled trade.
+- data.go.kr sends key errors as an XML body, so success is judged by `resultCode == "000"`.
+- Error messages do not contain the request URL or the service key.
+- Uses the same key as the existing env `MOLIT_API_KEY`.
+
+#### Verification
+- httptest fixtures: parsing, month range, paging to the second page, error XML, missing key, and no key in error text all pass.
+- Without a key, the live endpoint returns `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`, which confirms the path is right. **One live call with a real key is still pending**, so the issue stays open.
+
+
+## 8. `feat/b2c-transit` ([#22](https://github.com/JO-HEEJIN/b2d_geo/pull/22))
+
+### 커밋
+
+- `e752778` feat(b2c): load nationwide bus stops and wire the infra map to the database
+
+  Adds the transit_stops table and a b2d-etl transit-bus command for the
+  MOLIT nationwide bus stop CSV (CP949, header checked against the
+  2026-10-20 file). The infra map now reads subway and bus stops from
+  transit_stops and convenience stores and hospitals from places, using
+  category codes confirmed in the 2026-09 store data.
+  
+  Refs #17
+
+### Description
+
+Refs #17 (module 4 `infra_map`)
+
+#### Data checked before writing code
+- **Bus stops:** 국토교통부_전국 버스정류장 위치정보 (data.go.kr 15067528), 2026-10-20 file. CP949 CSV. Header: `정류장번호,정류장명,위도,경도,정보수집일,모바일단축번호,도시코드,도시명,관리도시명`. 213,985 rows, no duplicate stop IDs, no coordinates outside Korea. Stop names can contain commas inside quotes (e.g. "서면,광무교").
+  - Rows per B2C area: 화성 3,205 · 용인 2,993 · 수원 1,529 · 하남 619 · 인천 9,899 · 서울 4,110.
+- **Store category codes:** counted from the 상가정보 2026-09 nationwide file.
+  - Convenience store: `G20405` (57,516 stores).
+  - Hospital: `Q10101` 종합병원 (511), `Q10102` 일반병원 (1,160), `Q10201` 내과/소아과 의원 (8,037).
+
+#### Changes
+- `migrations/014_b2c_transit.sql`: `transit_stops` table (subway_station / bus_stop, unique (kind, stop_id), gist index).
+- `internal/etl/transit`: header-checked CSV parser and a loader that replaces all bus rows in one transaction.
+- `b2d-etl transit-bus --version YYYY-MM-DD <csv>`.
+- Module 4: `TransitSource` reads `transit_stops`; `NewInfraMapFromDB` wires all four sources.
+
+#### Verification
+- Unit tests: CP949 decoding, quoted commas, bad coordinates skipped, wrong header rejected.
+- Loaded the real file into local PostGIS: `inserted=213985 skipped=0` in 6.5 s. Nearest-stop query near Jamsil returns 잠실새내역 stops 215 m away.
+- PostGIS test (`B2D_TEST_DATABASE_URL`): all four summary lines come from the database with correct walking minutes.
+
+#### Still open in #17
+Subway stations. The 국가철도공단 station file (data.go.kr 15093755, XLSX) is behind a captcha, so it was not fetched automatically. The loader will be written after the file is downloaded by hand and its header checked.
+
+
+## 9. `feat/b2c-listings-source` ([#23](https://github.com/JO-HEEJIN/b2d_geo/pull/23))
+
+### 커밋
+
+- `fba62a0` feat(b2c): store directly registered listings and refresh them from a timer
+
+  Adds the b2c_listings table and a ListingStore that registers listings,
+  closes them as sold or withdrawn by the same registrant, and serves the
+  active ones as the first ListingSource. b2d-etl b2c-listings runs one
+  refresh with the state file, prints the systemd units on request, and a
+  oneshot compose service lets the server timer run it every minute.
+  
+  Refs #18
+
+### Description
+
+Refs #18 (module 5 `remaining_listings`)
+
+#### Changes
+- `migrations/015_b2c_listings.sql`: `b2c_listings` stores directly registered listings with status active / sold / withdrawn. Portal-scraped listings are never stored here (ADR 0002).
+- `ListingStore` (in module 5):
+  - `Register` saves a listing.
+  - `Close` marks it sold or withdrawn. Only the original registrant can do this.
+  - `Fetch` returns active listings, so the store is the first `ListingSource`.
+- `RemainingListings.RefreshOnce(statePath)`: load state → Refresh → save state. This is what one timer run does.
+- `b2d-etl b2c-listings [--state path] [--print-units]`.
+- `deploy/docker-compose.yml`: `b2c-listings` service. Profile `oneshot` keeps it from starting on `up`. The state file lives on a bind mount at `/var/lib/b2c-listings`.
+- `deploy/OPS.md` 6-4: server install steps (create the folder, write the units with `ned`, run verify, enable).
+
+#### Verification
+- PostGIS test: register two listings → first refresh (Added) → another registrant cannot close the listing → the registrant closes it as sold → a new process resumes from the state file and the listing shows up as Gone.
+- `systemd-analyze verify` on both units inside a Debian 12 container: **VERIFY_OK**. `OnCalendar=*:*:00` normalizes to `*-*-* *:*:00`.
+- `docker compose --profile oneshot config` resolves the service. Without the profile it is not included.
+- `b2d-etl b2c-listings` against the local DB: `added=0 gone=0`.
+
+#### Still open in #18
+- Installing on Lightsail needs SSH access (the `.pem` key is not on this machine).
+- A licensed listing feed contract is a business task.
+
+
+## 10. `feat/b2c-floor-plan-store` ([#24](https://github.com/JO-HEEJIN/b2d_geo/pull/24))
+
+### 커밋
+
+- `990d71e` feat(b2c): store registered floor plan types per complex
+
+  Adds the b2c_floor_plans table, one row per complex and type, and a
+  FloorPlanStore that saves a type (replacing an existing one) and loads a
+  complex into FloorPlanCatalog for comparison and viewing tours.
+  
+  Refs #19
+
+### Description
+
+Refs #19 (module 2 `floor_plan`)
+
+#### Changes
+- `migrations/016_b2c_floor_plans.sql`: `b2c_floor_plans` with primary key (complex_id, type_name). It stores bathroom position, living room layout, bays, orientation, units with that layout, the image URL (sources with clear rights only) and who registered it.
+- `FloorPlanStore` (in module 2):
+  - `Save` inserts a type, or replaces it if it already exists.
+  - `Catalog(complexID)` loads every type into `FloorPlanCatalog`, so the existing compare, tour and checklist functions work on stored data.
+
+#### Verification
+PostGIS test: save two types, overwrite 84A with a different bathroom position and units, reject a save with missing fields, then load the catalog and confirm order, overwritten values and an empty unit list.
+
+#### Still open in #19
+Deriving type candidates automatically from the building register (건축물대장 전유공용면적, `BldRgstHubService`). The endpoint answers, but checking the response fields needs a data.go.kr key, so that code waits for one.
+
+
+## 11. `feat/b2c-api` ([#25](https://github.com/JO-HEEJIN/b2d_geo/pull/25))
+
+### 커밋
+
+- `340fa24` feat(b2c): expose the B2C modules under /v1/b2c
+
+  Mounts a B2C handler behind the existing auth, rate limit and metering
+  chain. Read routes cover keywords, districts, recent trades with the buyer
+  verdict, the walking-time infra summary, floor plan tours and remaining
+  listings with recent sales. Registration lives under /v1/b2c/write and
+  needs the new b2c_write scope, so the public demo key cannot post
+  listings. Responses use snake_case like the rest of the API, and
+  apartment trade lookups are cached for six hours.
+  
+  Refs #20
+
+### Description
+
+Refs #20
+
+#### Endpoints
+Reads use the `geo` scope, like other location APIs.
+
+| Method | Path | Module |
+|---|---|---|
+| GET | `/v1/b2c/keywords` | Keyword dictionary |
+| GET | `/v1/b2c/districts` | 1: supported zones |
+| GET | `/v1/b2c/district?address=` or `?lon=&lat=` | 1: address match, falls back to nearest zone center |
+| GET | `/v1/b2c/trades?lawd_cd=&complex=&build_year=` | 3: six-month activity and buyer verdict (503 without MOLIT key) |
+| GET | `/v1/b2c/infra?lon=&lat=` | 4: walking minutes to subway, bus, convenience store and hospital |
+| GET | `/v1/b2c/floor-plans?complex_id=` | 2: all types, viewing tour, checklists |
+| GET | `/v1/b2c/listings?complex=` | 5: all remaining listings and sales from the last 7 days |
+
+Writes need the **`b2c_write` scope** (new):
+
+| Method | Path |
+|---|---|
+| POST | `/v1/b2c/write/floor-plans` |
+| POST | `/v1/b2c/write/listings` |
+| POST | `/v1/b2c/write/listings/{id}/close` (`{"status":"sold"|"withdrawn"}`, original registrant only) |
+
+#### Design notes
+- `internal/api` is bound by Phase 7 to return facts only. The B2C handler, which includes verdict text, lives in `src/b2c/http.go`; `server.go` only adds one mount line.
+- `internal/auth`: `requiredScope` maps `/v1/b2c/write/*` to `b2c_write`, and the scope is added to the issuable whitelist. The public demo key (`geo` only) cannot register listings. Callers of `requiredScope`: `Authenticator.Middleware` only.
+- The registrant is the API key ID (`apikey:<id>`). Request bodies are capped at 64 KiB and unknown fields are rejected.
+- Apartment trade responses are cached for 6 hours per (district, period) to stay under the data.go.kr daily quota.
+- Response JSON uses snake_case, matching the existing API.
+
+#### Verification (local server + PostGIS + real data)
+- Data loaded: national bus stops (213,985) and Gyeonggi store data (666,254).
+- `/infra` at Dongtan Station: bus stop 동탄역(동측) 1 min, convenience store 세븐동탄역사점 2 min, hospital 동탄메디365의원 2 min. Subway shows "not within 25 minutes" because station data is not loaded yet.
+- `/district`: an address with 청계동 → dongtan2; coordinates → jamsil (918 m from center).
+- Writes:
+  - Reader key gets 403 and writer key gets 201.
+  - Another registrant gets 403 when closing a listing; the original registrant closes it with 200.
+  - An unknown field returns 400.
+  - `/listings` returns remaining 1 and recently_sold 1.
+- `/floor-plans`: 84A/84B order, tour with units, 7 checklist items.
+- `/trades` without a key: 503 as intended.
+- `go test ./...` with the PostGIS tests enabled: all pass.
+
+
