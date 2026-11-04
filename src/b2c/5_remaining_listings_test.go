@@ -202,3 +202,24 @@ func TestDailyCap(t *testing.T) {
 		t.Fatal("cap not reset on a new day")
 	}
 }
+
+func TestSampleListings(t *testing.T) {
+	now := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	trades := []AptTrade{
+		{ComplexName: "A", UmdNm: "청계동", DealDate: now.AddDate(0, 0, -1), PriceManwon: 100000, AreaM2: 84.9, Floor: 12},
+		{ComplexName: "A", UmdNm: "청계동", DealDate: now.AddDate(0, 0, -5), PriceManwon: 99000, AreaM2: 84.9, Floor: 3},
+		{ComplexName: "A", UmdNm: "청계동", DealDate: now.AddDate(0, 0, -9), PriceManwon: 98000, AreaM2: 59.9, Floor: 7},
+		{ComplexName: "A", UmdNm: "청계동", DealDate: now.AddDate(0, 0, -2), PriceManwon: 120000, AreaM2: 84.9, Canceled: true},
+		{ComplexName: "B", UmdNm: "반송동", DealDate: now, PriceManwon: 50000, AreaM2: 59.9, Floor: 1},
+	}
+	got := SampleListings(trades, func(t AptTrade) bool { return t.UmdNm == "청계동" }, 2)
+	if len(got) != 2 || got[0].AskingManwon != 103000 || got[0].Floor != 12 || got[1].AskingManwon != 102000 {
+		t.Fatalf("got = %+v", got)
+	}
+	if got[0].TypeName != "전용 84.90㎡" || got[0].ComplexName != "A" {
+		t.Errorf("first = %+v", got[0])
+	}
+	if all := SampleListings(trades, nil, 5); len(all) != 4 || all[3].ComplexName != "B" {
+		t.Errorf("all = %+v", all)
+	}
+}

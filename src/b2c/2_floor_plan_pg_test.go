@@ -51,7 +51,7 @@ func TestFloorPlanStoreAgainstPostgres(t *testing.T) {
 	}
 
 	// 자동 후보는 사람이 등록한 같은 이름의 타입을 덮어쓰지 않는다.
-	if err := store.Save(ctx, FloorPlanVariant{ComplexID: "b2c_test_complex", TypeName: "84㎡ 01라인", ExclusiveAreaM2: 84.9, BathroomPosition: "현관 옆"}, "b2c_test"); err != nil {
+	if err := store.Save(ctx, FloorPlanVariant{ComplexID: "b2c_test_complex", TypeName: "84.90㎡ 01라인", ExclusiveAreaM2: 84.9, BathroomPosition: "현관 옆"}, "b2c_test"); err != nil {
 		t.Fatal(err)
 	}
 	cands := NewFloorPlanCatalog().CandidatesFromUnits("b2c_test_complex", []RegisteredUnit{
@@ -65,8 +65,8 @@ func TestFloorPlanStoreAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keep, _ := c.find("b2c_test_complex", "84㎡ 01라인")
-	added, _ := c.find("b2c_test_complex", "84㎡ 02라인")
+	keep, _ := c.find("b2c_test_complex", "84.90㎡ 01라인")
+	added, _ := c.find("b2c_test_complex", "84.90㎡ 02라인")
 	if keep.BathroomPosition != "현관 옆" || len(keep.Units) != 0 || len(added.Units) != 1 || added.Units[0] != "101동 102호" {
 		t.Fatalf("keep=%+v added=%+v", keep, added)
 	}

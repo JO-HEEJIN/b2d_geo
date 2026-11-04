@@ -191,16 +191,7 @@ function renderDetail(d) {
   }
   html += `</div>`;
 
-  html += `<div class="sec"><h3>같은 아파트, 다른 구조 <small>평면도만으로는 모릅니다. 직접 보세요</small></h3>`;
-  const fp = d.floor_plans;
-  if (fp && fp.variants.length) {
-    html += `<div class="types">${fp.variants
-      .map((t, i) => `<button aria-pressed="${i === 0}" data-i="${i}">${esc(t.type_name)} · ${t.units.length}세대</button>`)
-      .join("")}</div><div class="type-box" id="typeBox"></div>`;
-  } else {
-    html += `<p class="muted">아직 구조 정보가 없습니다. 건축물대장에서 불러오는 데 하루 한도가 있어 내일 다시 보이거나, 등록되면 나타납니다.</p>`;
-  }
-  html += `</div>`;
+  html += `<div class="sec"><h3>같은 아파트, 다른 구조 <small>평면도만으로는 모릅니다. 직접 보세요</small></h3><div id="floorPlans"></div></div>`;
 
   html += `<div class="sec"><h3>최근 실거래 <small>해제된 거래는 줄을 그었습니다</small></h3>`;
   html += d.trades.length
@@ -222,29 +213,62 @@ function renderDetail(d) {
   panel.innerHTML = html;
   panel.querySelector(".back").addEventListener("click", backToList);
 
-  if (fp && fp.variants.length) {
-    const showType = (i) => {
-      const t = fp.variants[i];
-      panel.querySelectorAll(".types button").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.i) === i)));
-      const units = t.units.slice(0, 12).join(", ") + (t.units.length > 12 ? ` 외 ${t.units.length - 12}세대` : "");
-      document.getElementById("typeBox").innerHTML =
-        `전용 ${t.exclusive_area_m2}㎡ (${pyeong(t.exclusive_area_m2)})` +
-        (t.bathroom_position ? ` · 화장실 ${esc(t.bathroom_position)}` : "") +
-        (t.living_room ? ` · 거실 ${esc(t.living_room)}` : "") +
-        `<div style="margin-top:6px">이 구조로 지어진 집: <span class="units">${esc(units || "등록된 세대 없음")}</span></div>` +
-        `<ol>${(fp.checklists[t.type_name] || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ol>`;
-    };
-    panel.querySelectorAll(".types button").forEach((b) => b.addEventListener("click", () => showType(Number(b.dataset.i))));
-    showType(0);
-  }
-
+  renderFloorPlans(d.floor_plans);
   renderListings(c.name, d.listings);
   drawInfra(c, d.infra);
 }
 
+// 구조 칸: 준비돼 있으면 타입 버튼과 상세, 만드는 중이면 5초마다 다시 묻는다(최대 2분).
+function renderFloorPlans(fp, tries = 0) {
+  const box = document.getElementById("floorPlans");
+  if (!box) return;
+  if (!fp) {
+    box.innerHTML = `<p class="muted">이 단지의 위치를 찾지 못해 구조 정보를 불러오지 못했습니다.</p>`;
+    return;
+  }
+  if (fp.status === "building" || (!fp.variants.length && fp.status !== "none" && tries > 0)) {
+    box.innerHTML = `<p class="muted">건축물대장에서 이 단지의 모든 세대를 읽어 구조를 정리하는 중입니다. 잠시 후 자동으로 나타납니다.</p>`;
+    if (tries < 24) {
+      setTimeout(async () => {
+        try {
+          const next = await api("/b2c/floor-plans", { complex_id: fp.complex_id });
+          if (document.getElementById("floorPlans") === box) renderFloorPlans(next, tries + 1);
+        } catch (e) {
+          box.innerHTML = `<p class="muted">구조 정보를 불러오지 못했습니다. ${esc(errText(e))}</p>`;
+        }
+      }, 5000);
+    }
+    return;
+  }
+  if (!fp.variants.length) {
+    box.innerHTML = `<p class="muted">아직 구조 정보가 없습니다. 건축물대장 조회는 하루 한도가 있어 내일 다시 보이거나, 등록되면 나타납니다.</p>`;
+    return;
+  }
+  box.innerHTML =
+    `<div class="types">${fp.variants
+      .map((t, i) => `<button aria-pressed="${i === 0}" data-i="${i}">${esc(t.type_name)} · ${t.units.length}세대</button>`)
+      .join("")}</div><div class="type-box" id="typeBox"></div>`;
+  const showType = (i) => {
+    const t = fp.variants[i];
+    box.querySelectorAll(".types button").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.i) === i)));
+    const units = t.units.slice(0, 12).join(", ") + (t.units.length > 12 ? ` 외 ${t.units.length - 12}세대` : "");
+    document.getElementById("typeBox").innerHTML =
+      `전용 ${t.exclusive_area_m2}㎡ (${pyeong(t.exclusive_area_m2)})` +
+      (t.bathroom_position ? ` · 화장실 ${esc(t.bathroom_position)}` : "") +
+      (t.living_room ? ` · 거실 ${esc(t.living_room)}` : "") +
+      `<div style="margin-top:6px">이 구조로 지어진 집: <span class="units">${esc(units || "등록된 세대 없음")}</span></div>` +
+      `<ol>${(fp.checklists[t.type_name] || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ol>`;
+  };
+  box.querySelectorAll(".types button").forEach((b) => b.addEventListener("click", () => showType(Number(b.dataset.i))));
+  showType(0);
+}
+
 function listingRows(items) {
   return items
-    .map((l) => `<tr><td>${esc(l.type_name || "")}</td><td>${l.floor ? l.floor + "층" : ""}</td><td class="r">${formatManwon(l.asking_manwon)}</td></tr>`)
+    .map(
+      (l) =>
+        `<tr><td>${l.source === "sample" ? '<span class="lvl sample">예시</span> ' : ""}${esc(l.type_name || "")}</td><td>${l.floor ? l.floor + "층" : ""}</td><td class="r">${formatManwon(l.asking_manwon)}</td></tr>`
+    )
     .join("");
 }
 
@@ -254,7 +278,13 @@ function renderListings(name, page) {
     box.innerHTML = `<p class="muted">지금 등록된 매물이 없습니다. 이 동네는 매물이 나오는 대로 팔릴 수 있어요.</p>`;
     return;
   }
-  box.innerHTML = `<p class="muted" style="margin:0 0 6px">${page.total}건</p><table class="mini" id="listingTable">${listingRows(page.listings)}</table>`;
+  const hasSample = page.listings.some((l) => l.source === "sample");
+  box.innerHTML =
+    `<p class="muted" style="margin:0 0 6px">${page.total}건</p>` +
+    (hasSample
+      ? `<p class="sample-note">"예시"는 실제 매물이 아닙니다. 매물 서비스 연결 전, 최근 실거래가에 3%를 더해 만든 유저 테스트용 매물입니다.</p>`
+      : "") +
+    `<table class="mini" id="listingTable">${listingRows(page.listings)}</table>`;
   let next = page.next_offset;
   const addMore = () => {
     if (next == null) return;
