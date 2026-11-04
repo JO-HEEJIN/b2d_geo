@@ -8,9 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Listing은 지금 팔려고 내놓은 매물 1건이다.
@@ -265,4 +268,95 @@ func sortListings(list []Listing) {
 		}
 		return a.ID < b.ID
 	})
+}
+
+// DirectListingSourceName은 직접 등록 매물의 Listing.Source 값이다.
+const DirectListingSourceName = "direct_registration"
+
+// ListingStore는 중개사·집주인이 직접 등록한 매물을 b2c_listings에 두고,
+// RemainingListings가 읽는 ListingSource 역할도 한다.
+type ListingStore struct {
+	pool *pgxpool.Pool
+}
+
+// NewListingStore는 b2c_listings 테이블을 쓰는 매물 저장소를 만든다.
+func NewListingStore(pool *pgxpool.Pool) *ListingStore {
+	return &ListingStore{pool: pool}
+}
+
+// Register는 매물을 등록하고 새 ID를 돌려준다. registeredBy는 등록한 사람(API 키 이름 등)이다.
+func (s *ListingStore) Register(ctx context.Context, l Listing, registeredBy string) (string, error) {
+	if strings.TrimSpace(l.ComplexName) == "" || l.AskingManwon <= 0 || registeredBy == "" {
+		return "", fmt.Errorf("complex_name, asking_manwon(>0), registered_by required")
+	}
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO b2c_listings (complex_name, type_name, asking_manwon, floor, lon, lat, registered_by)
+		VALUES ($1, NULLIF($2, ''), $3, NULLIF($4, 0), NULLIF($5, 0), NULLIF($6, 0), $7)
+		RETURNING id`,
+		strings.TrimSpace(l.ComplexName), l.TypeName, l.AskingManwon, l.Floor, l.Lon, l.Lat, registeredBy).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return strconv.FormatInt(id, 10), nil
+}
+
+// Close는 매물을 팔림(sold) 또는 내림(withdrawn)으로 바꾼다. 다음 Refresh에서 Gone으로 잡힌다.
+// 등록한 사람만 닫을 수 있다.
+func (s *ListingStore) Close(ctx context.Context, id, status, registeredBy string) error {
+	if status != "sold" && status != "withdrawn" {
+		return fmt.Errorf("status must be sold or withdrawn")
+	}
+	n, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid listing id %q", id)
+	}
+	ct, err := s.pool.Exec(ctx, `
+		UPDATE b2c_listings SET status = $2, updated_at = now()
+		WHERE id = $1 AND status = 'active' AND registered_by = $3`, n, status, registeredBy)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrListingNotFound
+	}
+	return nil
+}
+
+// ErrListingNotFound는 닫을 매물이 없거나(이미 닫힘 포함) 등록자가 다를 때다.
+var ErrListingNotFound = errors.New("active listing not found for this registrant")
+
+// Fetch는 지금 active인 직접 등록 매물 전부를 돌려준다 (ListingSource 구현).
+func (s *ListingStore) Fetch(ctx context.Context) ([]Listing, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
+		       COALESCE(lon, 0), COALESCE(lat, 0)
+		FROM b2c_listings WHERE status = 'active'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Listing
+	for rows.Next() {
+		var id int64
+		l := Listing{Source: DirectListingSourceName}
+		if err := rows.Scan(&id, &l.ComplexName, &l.TypeName, &l.AskingManwon, &l.Floor, &l.Lon, &l.Lat); err != nil {
+			return nil, err
+		}
+		l.ID = strconv.FormatInt(id, 10)
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// RefreshOnce는 systemd 타이머가 한 번 부르는 작업이다: 상태 읽기 -> Refresh -> 상태 저장.
+func (r *RemainingListings) RefreshOnce(ctx context.Context, statePath string) (ListingChange, error) {
+	if err := r.LoadState(statePath); err != nil {
+		return ListingChange{}, err
+	}
+	change, err := r.Refresh(ctx)
+	if err != nil {
+		return ListingChange{}, err
+	}
+	return change, r.SaveState(statePath)
 }
