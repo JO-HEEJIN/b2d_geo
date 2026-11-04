@@ -35,6 +35,7 @@ type Listing struct {
 	Source       string    `json:"source"` // 원천 이름. 출처를 항상 남긴다
 	FirstSeen    time.Time `json:"first_seen"`
 	LastSeen     time.Time `json:"last_seen"`
+	Status       string    `json:"status,omitempty"` // 등록자 본인 목록(Mine)에서만 채운다: active, sold, withdrawn
 }
 
 // ListingSource는 현재 나와 있는 매물 전체를 돌려준다. 이용 계약이 있는 매물 피드나
@@ -621,4 +622,34 @@ func (s *ListingStore) PurgeSamples(ctx context.Context, zone string) (int64, er
 		return 0, err
 	}
 	return ct.RowsAffected(), nil
+}
+
+// Mine은 등록자 본인의 매물을 돌려준다. 판매 중(active)은 전부, 닫힌 매물은 최근 30일 것만, 최근 등록 순.
+func (s *ListingStore) Mine(ctx context.Context, registeredBy string) ([]Listing, error) {
+	if registeredBy == "" {
+		return nil, fmt.Errorf("registered_by required")
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, status
+		FROM b2c_listings
+		WHERE registered_by = $1 AND (status = 'active' OR updated_at >= now() - interval '30 days')
+		ORDER BY (status = 'active') DESC, created_at DESC, id DESC
+		LIMIT 1000`, registeredBy)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Listing{}
+	for rows.Next() {
+		var id int64
+		l := Listing{Source: DirectListingSourceName}
+		if err := rows.Scan(&id, &l.ComplexName, &l.TypeName, &l.AskingManwon, &l.Floor, &l.Lon, &l.Lat,
+			&l.FirstSeen, &l.LastSeen, &l.Status); err != nil {
+			return nil, err
+		}
+		l.ID = strconv.FormatInt(id, 10)
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }

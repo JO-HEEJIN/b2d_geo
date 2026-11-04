@@ -121,4 +121,18 @@ func TestListingStoreAgainstPostgres(t *testing.T) {
 	if n, err := store.PurgeSamples(ctx, "b2c_test"); err != nil || n != 1 {
 		t.Fatalf("purge n=%d err=%v", n, err)
 	}
+
+	// Mine: 등록자 본인 것만, 판매 중이 먼저, 팔린 매물은 상태와 함께.
+	mine, err := store.Mine(ctx, "b2c_test_agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mine) == 0 || mine[0].Status != "active" || mine[len(mine)-1].Status != "sold" {
+		t.Fatalf("mine = %+v", mine)
+	}
+	for _, l := range mine {
+		if l.ComplexName == "동탄역시범" && l.AskingManwon == 97000 {
+			t.Fatalf("another registrant's listing leaked: %+v", l)
+		}
+	}
 }
