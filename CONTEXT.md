@@ -32,6 +32,10 @@
   (조급함, 남들도 샀다는 안도감, 계약 뒤 수리비)을 따른다.
 - 구역은 송도동·1동탄·2동탄·하남·용인 수지·수원·잠실 일곱 곳뿐이다. 1/2동탄은 법정동으로 가른다
   (화성시 동탄구 41597, 2026-03-01 신설 여울동은 2동탄).
+- 일반 사용자 화면은 `/b2c.html`("집 구경", 메인·지도 메뉴에 링크)이다. 구역 -> 단지 목록(6개월 거래 많은 순, 전부)
+  -> 단지 상세(판단, 실거래, 도보시간, 구조, 남은 매물). 공개 데모 키로 조회한다. 단지 위치는 실거래의 법정동 이름을
+  행정안전부 법정동코드 API로 10자리 코드로 바꾸고 PNU로 `parcels` 대표점을 찾는다. 단지를 처음 열 때 평면이
+  없으면 건축물대장에서 후보를 만든다(하루 40단지, 첫 요청 약 30초, 이후 즉시).
 - API는 `/v1/b2c/*`다. 판단 문구가 있어 핸들러는 `internal/api`(사실 반환 경계)가 아닌 `src/b2c`에 있고,
   `server.go`는 경로만 붙인다. 읽기는 `geo` scope, 등록(`/v1/b2c/write/*`)은 `b2c_write` scope가 필요하다.
   남은 매물 목록은 `limit`(1-200, 기본 50)·`offset` 페이지로 나눠 주고 `next_offset`으로 끝까지 넘긴다.
@@ -48,8 +52,8 @@
   한 번에 올린다(`b2d-etl b2c-listings-import`, `POST /v1/b2c/write/listings/import`, UTF-8·CP949, 한글 헤더 허용).
 - 남은 매물 갱신은 서버 systemd 타이머(매분, `Persistent=true`)가 compose `b2c-listings`(profile oneshot)를
   한 번씩 돌린다. 상태 파일은 호스트 `/var/lib/b2c-listings`. 설치 절차는 deploy/OPS.md 6-4.
-- 운영 반영: app·b2c-listings 이미지 `sha-c7ec7e7`(2026-11-05), 마이그레이션 014~016, 버스정류장 213,985건
+- 운영 반영: app·b2c-listings 이미지 `sha-8fade59`(2026-11-05, `/b2c.html` 포함), 마이그레이션 014~016, 버스정류장 213,985건
   (2026-10-20판), 지하철역 1,094건(2026-06-30판), 동탄역 신미주 평면 후보 6개, `b2c-listings.timer` 가동.
-  ned-sync는 `sha-d41aab8` 그대로. 직전 override는 `docker-compose.override.yml.pre-c7ec7e7`.
+  ned-sync는 `sha-d41aab8` 그대로. 직전 override는 `docker-compose.override.yml.pre-8fade59`.
   유저 테스트용 등록 키 `b2c-user-test`(id 48, `geo,b2c_write`)를 발급했다.
 - 아파트 매매 API는 2026-11-04 이용 신청이 승인된 개발계정 키로 운영에서 동작한다.
