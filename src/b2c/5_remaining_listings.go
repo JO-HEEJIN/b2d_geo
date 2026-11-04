@@ -1,10 +1,13 @@
 package b2c
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,9 +15,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/text/encoding/korean"
 )
 
 // Listing은 지금 팔려고 내놓은 매물 1건이다.
@@ -436,4 +441,125 @@ func (r *RemainingListings) RefreshOnce(ctx context.Context, statePath string) (
 		return ListingChange{}, err
 	}
 	return change, r.SaveState(statePath)
+}
+
+// listingCSVMaxRows는 CSV 한 번에 올릴 수 있는 최대 매물 수다.
+const listingCSVMaxRows = 2000
+
+// listingCSVColumns는 CSV 열 이름이다. 영문과 한글 헤더를 모두 받는다. complex_name과 asking_manwon은 필수.
+var listingCSVColumns = map[string]string{
+	"complex_name": "complex_name", "단지명": "complex_name",
+	"type_name": "type_name", "타입": "type_name",
+	"asking_manwon": "asking_manwon", "호가(만원)": "asking_manwon", "호가": "asking_manwon",
+	"floor": "floor", "층": "floor",
+	"lon": "lon", "경도": "lon",
+	"lat": "lat", "위도": "lat",
+}
+
+// ListingCSVError는 CSV의 잘못된 행 하나다. Line은 헤더를 1로 센 줄 번호다.
+type ListingCSVError struct {
+	Line    int    `json:"line"`
+	Message string `json:"message"`
+}
+
+// ParseListingsCSV는 사람이 정리한 매물 CSV를 읽는다. 엑셀이 저장한 CP949 파일도 받는다.
+// 잘못된 행은 건너뛰고 줄 번호와 이유를 돌려준다. 헤더가 틀리거나 행이 너무 많으면 전체 오류다.
+func ParseListingsCSV(data []byte) ([]Listing, []ListingCSVError, error) {
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	if !utf8.Valid(data) {
+		decoded, err := korean.EUCKR.NewDecoder().Bytes(data)
+		if err != nil {
+			return nil, nil, fmt.Errorf("CSV 인코딩을 읽을 수 없습니다 (UTF-8 또는 CP949)")
+		}
+		data = decoded
+	}
+	r := csv.NewReader(bytes.NewReader(data))
+	r.FieldsPerRecord = -1
+	r.TrimLeadingSpace = true
+	header, err := r.Read()
+	if err != nil {
+		return nil, nil, fmt.Errorf("헤더 읽기: %w", err)
+	}
+	idx := map[string]int{}
+	for i, h := range header {
+		if col, ok := listingCSVColumns[strings.TrimSpace(h)]; ok {
+			idx[col] = i
+		}
+	}
+	if _, ok := idx["complex_name"]; !ok {
+		return nil, nil, fmt.Errorf("헤더에 complex_name(단지명) 열이 없습니다")
+	}
+	if _, ok := idx["asking_manwon"]; !ok {
+		return nil, nil, fmt.Errorf("헤더에 asking_manwon(호가(만원)) 열이 없습니다")
+	}
+	get := func(rec []string, col string) string {
+		if i, ok := idx[col]; ok && i < len(rec) {
+			return strings.TrimSpace(rec[i])
+		}
+		return ""
+	}
+	var out []Listing
+	var bad []ListingCSVError
+	for line := 2; ; line++ {
+		rec, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			bad = append(bad, ListingCSVError{Line: line, Message: err.Error()})
+			continue
+		}
+		if len(out)+len(bad) >= listingCSVMaxRows {
+			return nil, nil, fmt.Errorf("한 번에 %d행까지 올릴 수 있습니다", listingCSVMaxRows)
+		}
+		l := Listing{ComplexName: get(rec, "complex_name"), TypeName: get(rec, "type_name")}
+		price, err := strconv.Atoi(strings.ReplaceAll(get(rec, "asking_manwon"), ",", ""))
+		if l.ComplexName == "" || err != nil || price <= 0 {
+			bad = append(bad, ListingCSVError{Line: line, Message: "단지명과 호가(만원, 0보다 큰 정수)가 필요합니다"})
+			continue
+		}
+		l.AskingManwon = price
+		if f := get(rec, "floor"); f != "" {
+			if l.Floor, err = strconv.Atoi(f); err != nil {
+				bad = append(bad, ListingCSVError{Line: line, Message: "층은 정수여야 합니다"})
+				continue
+			}
+		}
+		lonStr, latStr := get(rec, "lon"), get(rec, "lat")
+		if lonStr != "" || latStr != "" {
+			lon, errLon := strconv.ParseFloat(lonStr, 64)
+			lat, errLat := strconv.ParseFloat(latStr, 64)
+			if errLon != nil || errLat != nil || lon < 124 || lon > 132 || lat < 33 || lat > 39.5 {
+				bad = append(bad, ListingCSVError{Line: line, Message: "경도·위도가 한국 범위가 아닙니다"})
+				continue
+			}
+			l.Lon, l.Lat = lon, lat
+		}
+		out = append(out, l)
+	}
+	return out, bad, nil
+}
+
+// RegisterMany는 여러 매물을 한 트랜잭션으로 등록한다. 하나라도 실패하면 아무것도 넣지 않는다.
+func (s *ListingStore) RegisterMany(ctx context.Context, listings []Listing, registeredBy string) (int, error) {
+	if registeredBy == "" {
+		return 0, fmt.Errorf("registered_by required")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	for _, l := range listings {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO b2c_listings (complex_name, type_name, asking_manwon, floor, lon, lat, registered_by)
+			VALUES ($1, NULLIF($2, ''), $3, NULLIF($4, 0), NULLIF($5, 0), NULLIF($6, 0), $7)`,
+			l.ComplexName, l.TypeName, l.AskingManwon, l.Floor, l.Lon, l.Lat, registeredBy); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return len(listings), nil
 }

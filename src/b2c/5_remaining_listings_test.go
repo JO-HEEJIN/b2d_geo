@@ -3,10 +3,13 @@ package b2c
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/text/encoding/korean"
 )
 
 type scriptedSource struct {
@@ -140,5 +143,51 @@ func TestPageParams(t *testing.T) {
 		if l != c.l || o != c.o || ok != c.ok {
 			t.Errorf("pageParams(%q,%q) = %d,%d,%v", c.limit, c.offset, l, o, ok)
 		}
+	}
+}
+
+func TestParseListingsCSV(t *testing.T) {
+	csvText := "\ufeff단지명,타입,호가(만원),층,경도,위도\n" +
+		"동탄역시범,84A,\"99,000\",12,127.0961,37.2003\n" +
+		"동탄역시범,,97000,,,\n" +
+		",84A,90000,3,,\n" +
+		"동탄역시범,84B,0,3,,\n" +
+		"동탄역시범,84B,95000,고층,,\n" +
+		"동탄역시범,84B,95000,3,10,10\n"
+	got, bad, err := ParseListingsCSV([]byte(csvText))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].AskingManwon != 99000 || got[0].Floor != 12 || got[0].Lat != 37.2003 || got[1].TypeName != "" {
+		t.Fatalf("got = %+v", got)
+	}
+	lines := []int{}
+	for _, b := range bad {
+		lines = append(lines, b.Line)
+	}
+	if fmt.Sprint(lines) != "[4 5 6 7]" {
+		t.Errorf("bad lines = %v (%+v)", lines, bad)
+	}
+}
+
+func TestParseListingsCSVEncodingAndHeader(t *testing.T) {
+	cp949, err := korean.EUCKR.NewEncoder().Bytes([]byte("complex_name,asking_manwon\n하우스디더레이크,88000\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := ParseListingsCSV(cp949)
+	if err != nil || len(got) != 1 || got[0].ComplexName != "하우스디더레이크" {
+		t.Fatalf("cp949 got=%+v err=%v", got, err)
+	}
+	if _, _, err := ParseListingsCSV([]byte("name,price\nx,1\n")); err == nil {
+		t.Error("expected header error")
+	}
+	var big strings.Builder
+	big.WriteString("complex_name,asking_manwon\n")
+	for i := 0; i <= listingCSVMaxRows; i++ {
+		big.WriteString("a,1\n")
+	}
+	if _, _, err := ParseListingsCSV([]byte(big.String())); err == nil {
+		t.Error("expected row limit error")
 	}
 }
