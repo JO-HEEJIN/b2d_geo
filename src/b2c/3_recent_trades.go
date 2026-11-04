@@ -2,7 +2,13 @@ package b2c
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -167,3 +173,128 @@ func (a *RecentTradeAnalyzer) Verdict(act TradeActivity, buildYear int) BuyerVer
 	}
 	return v
 }
+
+// molitAptTradeURL은 국토교통부 아파트 매매 실거래가 자료 API다 (data.go.kr 15126469).
+const molitAptTradeURL = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
+
+// molitAptPageRows는 한 페이지 행 수다. 거래가 많은 시군구는 한 달에 1,000건을 넘으므로
+// totalCount까지 페이지를 넘긴다.
+const molitAptPageRows = 1000
+
+// MolitAptTradeSource는 국토교통부 아파트 매매 실거래 API로 TradeSource를 구현한다.
+// Key는 data.go.kr 일반 인증키(Decoding)이며 운영 env MOLIT_API_KEY와 같은 키다.
+type MolitAptTradeSource struct {
+	Key     string
+	Client  *http.Client
+	BaseURL string // 비면 molitAptTradeURL. 테스트에서 바꾼다
+}
+
+type molitAptItem struct {
+	AptNm      string `xml:"aptNm"`
+	DealAmount string `xml:"dealAmount"`
+	DealYear   string `xml:"dealYear"`
+	DealMonth  string `xml:"dealMonth"`
+	DealDay    string `xml:"dealDay"`
+	ExcluUseAr string `xml:"excluUseAr"`
+	Floor      string `xml:"floor"`
+	BuildYear  string `xml:"buildYear"`
+	CdealType  string `xml:"cdealType"` // 해제여부. 해제된 거래는 "O"
+}
+
+type molitAptResp struct {
+	Header struct {
+		ResultCode string `xml:"resultCode"`
+		ResultMsg  string `xml:"resultMsg"`
+	} `xml:"header"`
+	Body struct {
+		Items      []molitAptItem `xml:"items>item"`
+		TotalCount int            `xml:"totalCount"`
+	} `xml:"body"`
+}
+
+// Trades는 from이 속한 달부터 to가 속한 달까지 월별로 불러 합친다.
+func (s *MolitAptTradeSource) Trades(ctx context.Context, lawdCode string, from, to time.Time) ([]AptTrade, error) {
+	if s.Key == "" {
+		return nil, fmt.Errorf("MOLIT_API_KEY not set")
+	}
+	var out []AptTrade
+	for m := time.Date(from.Year(), from.Month(), 1, 0, 0, 0, 0, from.Location()); !m.After(to); m = m.AddDate(0, 1, 0) {
+		month, err := s.month(ctx, lawdCode, m.Format("200601"))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, month...)
+	}
+	return out, nil
+}
+
+func (s *MolitAptTradeSource) month(ctx context.Context, lawdCode, ym string) ([]AptTrade, error) {
+	base := s.BaseURL
+	if base == "" {
+		base = molitAptTradeURL
+	}
+	client := s.Client
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	var out []AptTrade
+	for page := 1; ; page++ {
+		u := fmt.Sprintf("%s?serviceKey=%s&LAWD_CD=%s&DEAL_YMD=%s&numOfRows=%d&pageNo=%d",
+			base, url.QueryEscape(s.Key), lawdCode, ym, molitAptPageRows, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			// url.Error는 요청 URL(키 포함)을 담으므로 그대로 올리지 않는다.
+			return nil, fmt.Errorf("molit apt trade %s %s: request failed", lawdCode, ym)
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		var mr molitAptResp
+		// data.go.kr은 키 오류도 200 + 에러 XML로 준다. resultCode로 판정한다.
+		if err := xml.Unmarshal(body, &mr); err != nil || mr.Header.ResultCode != "000" {
+			return nil, fmt.Errorf("molit apt trade %s %s: http %d resultCode=%q msg=%q",
+				lawdCode, ym, resp.StatusCode, mr.Header.ResultCode, mr.Header.ResultMsg)
+		}
+		for _, it := range mr.Body.Items {
+			t, ok := it.trade()
+			if ok {
+				out = append(out, t)
+			}
+		}
+		if len(mr.Body.Items) < molitAptPageRows || page*molitAptPageRows >= mr.Body.TotalCount {
+			return out, nil
+		}
+	}
+}
+
+// trade는 응답 항목을 AptTrade로 바꾼다. 날짜를 읽을 수 없는 항목은 버린다.
+func (it molitAptItem) trade() (AptTrade, bool) {
+	y, errY := strconv.Atoi(strings.TrimSpace(it.DealYear))
+	m, errM := strconv.Atoi(strings.TrimSpace(it.DealMonth))
+	d, errD := strconv.Atoi(strings.TrimSpace(it.DealDay))
+	if errY != nil || errM != nil || errD != nil {
+		return AptTrade{}, false
+	}
+	price, _ := strconv.Atoi(strings.NewReplacer(",", "", " ", "").Replace(it.DealAmount))
+	area, _ := strconv.ParseFloat(strings.TrimSpace(it.ExcluUseAr), 64)
+	floor, _ := strconv.Atoi(strings.TrimSpace(it.Floor))
+	built, _ := strconv.Atoi(strings.TrimSpace(it.BuildYear))
+	return AptTrade{
+		ComplexName: strings.TrimSpace(it.AptNm),
+		DealDate:    time.Date(y, time.Month(m), d, 0, 0, 0, 0, kstZone),
+		PriceManwon: price,
+		AreaM2:      area,
+		Floor:       floor,
+		BuildYear:   built,
+		Canceled:    strings.TrimSpace(it.CdealType) == "O",
+	}, true
+}
+
+// kstZone은 거래일 기준 시간대다. distroless 이미지에 tzdata가 없어도 되도록 고정 오프셋을 쓴다.
+var kstZone = time.FixedZone("KST", 9*60*60)
