@@ -55,10 +55,16 @@ type TradeActivity struct {
 
 // BuyerVerdict는 사람이 집을 고를 때 실제로 느끼는 감정을 따라 쓴 판단 문구다.
 type BuyerVerdict struct {
-	Level    Liveliness `json:"level"`
-	Message  string     `json:"message"`
-	Cautions []string   `json:"cautions"`
+	Level      Liveliness `json:"level"`
+	Message    string     `json:"message"`
+	Cautions   []string   `json:"cautions"`
+	Disclaimer string     `json:"disclaimer"`
 }
+
+// reportingLagDisclaimer는 모든 판단에 붙는 안내다. 실거래는 계약 후 30일 안에 신고하면 되므로
+// 최근 한 달 거래는 아직 덜 잡혀 있고, 최근 3개월이 그 전 3개월보다 적어 보일 수 있다.
+const reportingLagDisclaimer = "실거래는 계약 후 30일 안에 신고됩니다. 최근 한 달 거래는 아직 덜 집계되어 있어, " +
+	"최근 3개월 거래 수가 실제보다 적게 보일 수 있습니다."
 
 // RecentTradeAnalyzer는 최근 실거래 빈도로 살아 있는 동네인지 판단한다.
 // 실거래가 있다는 것은 수요와 공급이 만나 실제로 계약이 성사됐다는 뜻이고,
@@ -139,7 +145,7 @@ func (a *RecentTradeAnalyzer) Activity(trades []AptTrade, complexName string) Tr
 // 감정(놓칠까 하는 조급함, 남들도 샀다는 안도감, 계약 뒤 수리비 걱정)을 따른다.
 // buildYear가 0이면 준공연도 경고를 생략한다.
 func (a *RecentTradeAnalyzer) Verdict(act TradeActivity, buildYear int) BuyerVerdict {
-	v := BuyerVerdict{Level: act.Level}
+	v := BuyerVerdict{Level: act.Level, Disclaimer: reportingLagDisclaimer}
 	switch act.Level {
 	case LivelinessHot:
 		v.Message = fmt.Sprintf("6개월 동안 %d건, 평균 %.0f일마다 거래됐습니다. 매물이 나오는 대로 팔리는 동네라 "+

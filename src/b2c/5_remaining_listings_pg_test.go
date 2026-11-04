@@ -97,4 +97,17 @@ func TestListingStoreAgainstPostgres(t *testing.T) {
 	if p, err := store.Page(ctx, "nothing_here", 0, 0); err != nil || p.Listings == nil || p.NextOffset != nil || p.Limit != 50 {
 		t.Fatalf("empty = %+v %v", p, err)
 	}
+
+	// CSV 일괄 등록: 한 트랜잭션으로 들어가 페이지 조회에 나온다.
+	rows, bad, err := ParseListingsCSV([]byte("단지명,호가(만원)\nb2c_test_csv,61000\nb2c_test_csv,62000\n"))
+	if err != nil || len(bad) != 0 {
+		t.Fatalf("parse err=%v bad=%v", err, bad)
+	}
+	if n, err := store.RegisterMany(ctx, rows, "b2c_test_csv_importer"); err != nil || n != 2 {
+		t.Fatalf("register many n=%d err=%v", n, err)
+	}
+	if p, err := store.Page(ctx, "b2c_test_csv", 0, 0); err != nil || p.Total != 2 {
+		t.Fatalf("csv page = %+v %v", p, err)
+	}
+	pool.Exec(ctx, `DELETE FROM b2c_listings WHERE registered_by = 'b2c_test_csv_importer'`)
 }

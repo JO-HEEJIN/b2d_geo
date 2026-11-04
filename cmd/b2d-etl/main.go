@@ -35,7 +35,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|transit-subway|b2c-floor-plans|b2c-listings|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|transit-subway|b2c-floor-plans|b2c-listings|b2c-listings-import|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -132,6 +132,11 @@ func main() {
 	case "b2c-floor-plans":
 		if err := runB2CFloorPlans(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "b2c-floor-plans failed:", err)
+			os.Exit(1)
+		}
+	case "b2c-listings-import":
+		if err := runB2CListingsImport(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "b2c-listings-import failed:", err)
 			os.Exit(1)
 		}
 	case "b2c-listings":
@@ -312,6 +317,44 @@ func runB2CFloorPlans(ctx context.Context, args []string) error {
 	for _, c := range candidates {
 		fmt.Printf("  %s  %d세대\n", c.TypeName, len(c.Units))
 	}
+	return nil
+}
+
+// runB2CListingsImport는 사람이 정리한 매물 CSV를 b2c_listings에 한 번에 등록한다.
+// 잘못된 행이 있으면 아무것도 넣지 않고 줄 번호를 보여준다.
+func runB2CListingsImport(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("b2c-listings-import", flag.ContinueOnError)
+	registrant := fs.String("registrant", "", "등록자 이름 (registered_by에 csv:<이름>으로 남는다)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || *registrant == "" {
+		return fmt.Errorf("usage: b2d-etl b2c-listings-import --registrant <name> <csv>")
+	}
+	data, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	rows, bad, err := b2c.ParseListingsCSV(data)
+	if err != nil {
+		return err
+	}
+	if len(bad) > 0 {
+		for _, b := range bad {
+			fmt.Fprintf(os.Stderr, "  line %d: %s\n", b.Line, b.Message)
+		}
+		return fmt.Errorf("%d invalid rows, nothing imported", len(bad))
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	n, err := b2c.NewListingStore(pool).RegisterMany(ctx, rows, "csv:"+*registrant)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("b2c-listings-import: inserted=%d\n", n)
 	return nil
 }
 

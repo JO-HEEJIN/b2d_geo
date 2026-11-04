@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -55,6 +56,7 @@ func NewHandler(pool *pgxpool.Pool, molitKey string) *Handler {
 	h.mux.HandleFunc("POST /v1/b2c/write/floor-plans", h.saveFloorPlan)
 	h.mux.HandleFunc("POST /v1/b2c/write/floor-plans/from-register", h.floorPlansFromRegister)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings", h.registerListing)
+	h.mux.HandleFunc("POST /v1/b2c/write/listings/import", h.importListings)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings/{id}/close", h.closeListing)
 	return h
 }
@@ -275,6 +277,32 @@ func (h *Handler) registerListing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+}
+
+// importListings는 사람이 정리한 매물 CSV(본문, 1MB 이하)를 한 번에 등록한다.
+// 잘못된 행이 하나라도 있으면 아무것도 넣지 않고 줄 번호와 이유를 돌려준다.
+func (h *Handler) importListings(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeErr(w, http.StatusRequestEntityTooLarge, "CSV body must be 1MB or less")
+		return
+	}
+	rows, bad, err := ParseListingsCSV(data)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(bad) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid rows", "rows": bad, "inserted": 0})
+		return
+	}
+	n, err := h.listings.RegisterMany(r.Context(), rows, registrant(r.Context()))
+	if err != nil {
+		log.Printf("b2c import listings: %v", err)
+		writeErr(w, http.StatusInternalServerError, "save failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"inserted": n})
 }
 
 func (h *Handler) closeListing(w http.ResponseWriter, r *http.Request) {

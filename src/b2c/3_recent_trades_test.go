@@ -74,8 +74,8 @@ func TestVerdict(t *testing.T) {
 			t.Errorf("cautions missing %q: %s", want, joined)
 		}
 	}
-	if v := a.Verdict(TradeActivity{Level: LivelinessDormant}, 0); len(v.Cautions) != 0 {
-		t.Errorf("unexpected cautions %v", v.Cautions)
+	if v := a.Verdict(TradeActivity{Level: LivelinessDormant}, 0); len(v.Cautions) != 0 || !strings.Contains(v.Disclaimer, "30일") {
+		t.Errorf("unexpected cautions %v / disclaimer %q", v.Cautions, v.Disclaimer)
 	}
 }
 
