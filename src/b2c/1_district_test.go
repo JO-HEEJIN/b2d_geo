@@ -1,6 +1,12 @@
 package b2c
 
-import "testing"
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestClassify(t *testing.T) {
 	d := NewDistrictClassifier()
@@ -47,5 +53,77 @@ func TestCluster(t *testing.T) {
 	}
 	if n0, n1 := len(groups[0]), len(groups[1]); n0+n1 != 5 || (n0 != 3 && n1 != 3) {
 		t.Fatalf("sizes = %d,%d", n0, n1)
+	}
+}
+
+func TestPNU(t *testing.T) {
+	cases := map[string]string{
+		"80":      "4159710200100800000",
+		"722-3":   "4159710200107220003",
+		"산12-1":   "4159710200200120001",
+		" 1234 ":  "4159710200112340000",
+		"":        "",
+		"abc":     "",
+		"12345":   "",
+		"12-abcd": "",
+	}
+	for jibun, want := range cases {
+		got, ok := PNU("4159710200", jibun)
+		if got != want || ok != (want != "") {
+			t.Errorf("PNU(%q) = %q,%v want %q", jibun, got, ok, want)
+		}
+	}
+	if _, ok := PNU("41597", "80"); ok {
+		t.Error("short bcode accepted")
+	}
+}
+
+func TestZoneLookupAndInZone(t *testing.T) {
+	d := NewDistrictClassifier()
+	z, ok := d.Zone("dongtan2")
+	if !ok || z.Lawd[0] != "41597" || !z.InZone("여울동") || z.InZone("반송동") {
+		t.Fatalf("dongtan2 = %+v", z)
+	}
+	h, _ := d.Zone("hanam")
+	if !h.InZone("망월동") {
+		t.Error("hanam should include every dong")
+	}
+	if s, _ := d.Zone("suwon"); len(s.Lawd) != 4 {
+		t.Errorf("suwon lawd = %v", s.Lawd)
+	}
+	if _, ok := d.Zone("busan"); ok {
+		t.Error("unknown zone found")
+	}
+}
+
+func TestLegalDongResolver(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("locatadd_nm") != "경기도 화성시 동탄구" || r.URL.Query().Get("flag") != "Y" {
+			t.Errorf("query = %v", r.URL.Query())
+		}
+		fmt.Fprint(w, `{"StanReginCd":[{"head":[{"totalCount":3}]},{"row":[
+			{"region_cd":"4159700000","locallow_nm":""},
+			{"region_cd":"4159710200","locallow_nm":"반송동"},
+			{"region_cd":"4159711500","locallow_nm":"여울동"},
+			{"region_cd":"4159710221","locallow_nm":"어떤리"}]}]}`)
+	}))
+	defer srv.Close()
+	r := &LegalDongResolver{Key: "k", BaseURL: srv.URL}
+	for i := 0; i < 2; i++ {
+		codes, err := r.Codes(context.Background(), "경기도 화성시 동탄구")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(codes) != 2 || codes["41597|반송동"] != "4159710200" || codes["41597|여울동"] != "4159711500" {
+			t.Fatalf("codes = %v", codes)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d (cache miss)", calls)
+	}
+	if _, err := (&LegalDongResolver{}).Codes(context.Background(), "x"); err == nil {
+		t.Error("expected error without key")
 	}
 }
