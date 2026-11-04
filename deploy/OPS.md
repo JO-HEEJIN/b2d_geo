@@ -166,23 +166,27 @@ $RUN rone-sync                                       # 백필: 2005-01부터 이
 - 자동 실행: compose 서비스 `rone-sync`(데몬, 매일 03:17 KST, ned-sync와 같은 시각). 운영 Lightsail은 override에 같은 서비스를 넣어 띄운다.
 - 로그: `docker compose logs --tail 20 rone-sync`.
 
-## 6-4. B2C 남은 매물 갱신 (b2c-listings systemd 타이머)
+## 6-4. B2C 남은 매물 갱신 (b2c-listings systemd 타이머, 2026-11-04 가동)
 
 cron이 아니라 systemd 타이머가 매분 `docker compose run --rm --no-deps b2c-listings`를 한 번 돌린다.
 `Persistent=true`라서 서버가 꺼져 있던 사이 놓친 실행은 부팅 직후 바로 따라잡는다. 매물 원천은
-`b2c_listings`(직접 등록)뿐이다(ADR 0002). 마이그레이션 015가 적용된 이미지여야 한다.
+`b2c_listings`(직접 등록)뿐이다(ADR 0002). 서비스 정의는 서버 `docker-compose.override.yml`의
+`b2c-listings`(profile oneshot, 이미지 태그를 app과 같이 올린다). 서버에는 `ned`가 없으므로 유닛 파일은
+이미지가 출력한 내용을 그대로 설치한다.
 
 ```sh
-cd ~/b2d_geo/deploy && docker compose pull && docker compose run --rm --no-deps --entrypoint /b2d-etl app migrate
+cd ~/b2d_geo/deploy
 sudo install -d -o 65532 -g 65532 /var/lib/b2c-listings      # distroless nonroot가 상태 파일을 쓴다
-docker compose run --rm --no-deps --entrypoint /b2d-etl app b2c-listings --print-units   # 유닛 내용 출력
-sudo ned /etc/systemd/system/b2c-listings.service            # 출력의 service 부분을 붙여 넣는다
-sudo ned /etc/systemd/system/b2c-listings.timer              # 출력의 timer 부분을 붙여 넣는다
+docker compose run --rm --no-deps --entrypoint /b2d-etl app b2c-listings --print-units > /tmp/units.txt
+awk '/^# \/etc\/systemd\/system\//{f="/tmp/" substr($2,21); next} {print > f}' /tmp/units.txt
+sudo install -m 644 /tmp/b2c-listings.service /tmp/b2c-listings.timer /etc/systemd/system/
 sudo systemd-analyze verify /etc/systemd/system/b2c-listings.{service,timer}
 sudo systemctl daemon-reload && sudo systemctl enable --now b2c-listings.timer
 systemctl list-timers b2c-listings.timer                      # 다음 실행 시각
 journalctl -u b2c-listings -n 20                              # "b2c-listings: added=N gone=M"
 ```
+
+이미지를 올릴 때는 override의 app·b2c-listings 태그를 함께 바꾼다. 타이머 중지: `sudo systemctl disable --now b2c-listings.timer`.
 
 ## 7. "진짜 서비스" 백로그 (M1에서 이어서)
 
