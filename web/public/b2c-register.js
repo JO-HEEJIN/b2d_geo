@@ -203,11 +203,27 @@ async function loadMine() {
         <td class="r">${formatManwon(l.asking_manwon)}<div class="muted">${STATUS[l.status] || esc(l.status)}</div></td>
         <td class="r">${
           l.status === "active"
-            ? `<button class="btn ghost reg-small" data-id="${esc(l.id)}" data-s="sold">팔림</button> <button class="btn ghost reg-small" data-id="${esc(l.id)}" data-s="withdrawn">내림</button>`
+            ? `<button class="btn ghost reg-small" data-price-id="${esc(l.id)}" data-price="${l.asking_manwon}">호가 변경</button> <button class="btn ghost reg-small" data-id="${esc(l.id)}" data-s="sold">팔림</button> <button class="btn ghost reg-small" data-id="${esc(l.id)}" data-s="withdrawn">내림</button>`
             : ""
         }</td></tr>`
     )
     .join("")}</tbody></table>`;
+  box.querySelectorAll("button[data-price-id]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const value = prompt("새 호가를 만원 단위 정수로 입력해 주세요.", b.dataset.price);
+      if (value === null) return;
+      const price = Number(value.replace(/,/g, ""));
+      if (!Number.isSafeInteger(price) || price <= 0 || price > 2147483647) return alert("호가를 올바른 만원 단위 정수로 입력해 주세요.");
+      b.disabled = true;
+      try {
+        await writeApi("PATCH", `/listings/${encodeURIComponent(b.dataset.priceId)}/price`, { asking_manwon: price });
+        await loadMine();
+      } catch (e) {
+        b.disabled = false;
+        alert(e.message);
+      }
+    })
+  );
   box.querySelectorAll("button[data-id]").forEach((b) =>
     b.addEventListener("click", async () => {
       b.disabled = true;
