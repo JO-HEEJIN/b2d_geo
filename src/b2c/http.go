@@ -67,6 +67,7 @@ func NewHandler(pool *pgxpool.Pool, molitKey string) *Handler {
 	h.mux.HandleFunc("POST /v1/b2c/write/floor-plans/from-register", h.floorPlansFromRegister)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings", h.registerListing)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings/import", h.importListings)
+	h.mux.HandleFunc("GET /v1/b2c/write/listings/mine", h.myListings)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings/{id}/close", h.closeListing)
 	return h
 }
@@ -320,6 +321,17 @@ func (h *Handler) importListings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"inserted": n})
+}
+
+// myListings는 등록 화면의 "내 매물" 목록이다. b2c_write 키의 등록자 본인 것만 준다.
+func (h *Handler) myListings(w http.ResponseWriter, r *http.Request) {
+	list, err := h.listings.Mine(r.Context(), registrant(r.Context()))
+	if err != nil {
+		log.Printf("b2c my listings: %v", err)
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"listings": list})
 }
 
 func (h *Handler) closeListing(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>매물 등록 · 올맵</title>
+  <meta name="description" content="중개사·집주인용 매물 등록. 등록한 매물은 올맵 집 구경 화면의 남은 매물에 바로 나타납니다.">
+  <meta name="robots" content="noindex">
+  <link rel="icon" type="image/png" sizes="512x512" href="/brand/b2d-geo-c1abd2177e38.png">
+  <link rel="apple-touch-icon" href="/brand/b2d-geo-c1abd2177e38.png">
+  <meta property="og:image" content="https://api.birth2death.com/brand/b2d-geo-c1abd2177e38.png">
+  <meta property="og:image:alt" content="올맵 로고">
+  <link rel="stylesheet" href="/styles.css?v=ui-20261024">
+  <link rel="stylesheet" href="/b2c.css?v=b2c-20261105c">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><img class="brand-logo" src="/brand/b2d-geo-c1abd2177e38.png" alt="" width="34" height="34"> 올맵</a>
+    <nav>
+      <a href="/b2c.html">집 구경</a>
+      <a href="/b2c-register.html" class="active">매물 등록</a>
+      <button class="btn ghost" style="padding:7px 11px" onclick="toggleTheme()" aria-label="테마 전환">◐</button>
+    </nav>
+  </header>
+
+  <main class="reg">
+    <h1>매물 등록</h1>
+    <p class="reg-lead">등록한 매물은 <a href="/b2c.html">집 구경</a> 화면의 "지금 남은 매물"에 1분 안에 나타납니다. 팔리면 아래 "내 매물"에서 팔림으로 바꿔 주세요.</p>
+
+    <section class="reg-card" id="keyCard">
+      <h2>1. 등록 키</h2>
+      <p class="muted">올맵에서 받은 매물 등록용 키를 넣어 주세요. 이 브라우저에만 저장됩니다.</p>
+      <div class="reg-row">
+        <input id="key" type="password" autocomplete="off" placeholder="b2d_..." aria-label="등록 키">
+        <button class="btn" id="keySave">확인</button>
+        <button class="btn ghost" id="keyClear" hidden>지우기</button>
+      </div>
+      <p class="reg-msg" id="keyMsg"></p>
+    </section>
+
+    <section class="reg-card" id="formCard" hidden>
+      <h2>2. 매물 하나 등록</h2>
+      <div class="reg-grid">
+        <label>동네
+          <select id="zone"><option value="">동네를 고르세요</option></select>
+        </label>
+        <label>단지 <small>최근 6개월 실거래가 있는 단지</small>
+          <input id="complexFilter" type="search" placeholder="단지 이름으로 찾기" disabled>
+          <select id="complex" size="6" disabled></select>
+        </label>
+        <label>타입 <small>예: 84A, 전용 84.9㎡</small>
+          <input id="type" type="text" maxlength="40">
+        </label>
+        <label>층
+          <input id="floor" type="number" min="-5" max="120" inputmode="numeric">
+        </label>
+        <label>호가 (만원) <small id="pricePreview"></small>
+          <input id="price" type="number" min="1" inputmode="numeric" placeholder="예: 98000">
+        </label>
+      </div>
+      <button class="btn" id="submit">등록</button>
+      <p class="reg-msg" id="formMsg"></p>
+    </section>
+
+    <section class="reg-card" id="csvCard" hidden>
+      <h2>3. 여러 건 한 번에 (CSV)</h2>
+      <p class="muted">엑셀에서 아래 열로 정리해 CSV로 저장하면 됩니다. 단지명은 집 구경 화면의 이름과 똑같이 적어야 그 단지에 나타납니다.</p>
+      <pre class="reg-pre">단지명,타입,호가(만원),층,경도,위도
+동탄2하우스디더레이크,84A,"105,000",15,,</pre>
+      <div class="reg-row">
+        <input id="csvFile" type="file" accept=".csv,text/csv">
+        <button class="btn" id="csvUpload">올리기</button>
+      </div>
+      <p class="reg-msg" id="csvMsg"></p>
+    </section>
+
+    <section class="reg-card" id="mineCard" hidden>
+      <h2>내 매물</h2>
+      <div id="mine"></div>
+    </section>
+  </main>
+
+  <footer class="landing-foot">
+    <div>
+      <a href="/terms.html">이용약관</a>·
+      <a href="/privacy.html">개인정보처리방침</a>·
+      <a href="/refund.html">환불정책</a>
+    </div>
+    <p style="margin-top:14px">비투디 | 대표: 조희진 | 사업자등록번호: 211-25-67093 | 통신판매업신고번호: 2026-경기하남-1593</p>
+    <p style="margin-top:6px">경기도 하남시 미사강변남로 99, 1401호 | 전화: 070-8983-4287 | 이메일: info@birth2death.com</p>
+  </footer>
+
+  <script src="/shared.js?v=ui-20261024"></script>
+  <script src="/b2c-register.js?v=b2c-20261105c"></script>
+</body>
+</html>
