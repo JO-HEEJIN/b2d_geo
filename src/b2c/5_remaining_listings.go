@@ -321,7 +321,7 @@ func (s *ListingStore) Close(ctx context.Context, id, status, registeredBy strin
 	}
 	ct, err := s.pool.Exec(ctx, `
 		UPDATE b2c_listings SET status = $2, updated_at = now()
-		WHERE id = $1 AND status = 'active' AND registered_by = $3`, n, status, registeredBy)
+		WHERE id = $1 AND status = 'active' AND registered_by = $3 AND external_source IS NULL`, n, status, registeredBy)
 	if err != nil {
 		return err
 	}
@@ -338,8 +338,9 @@ var ErrListingNotFound = errors.New("active listing not found for this registran
 func (s *ListingStore) Fetch(ctx context.Context) ([]Listing, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
-		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by
-		FROM b2c_listings WHERE status = 'active'`)
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by, external_source
+		FROM b2c_listings WHERE status = 'active' AND external_source IS NULL
+		AND registered_by NOT LIKE 'sample:%'`)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +361,7 @@ const (
 	listingPageMax     = 200
 )
 
-// Page는 active 직접 등록 매물을 단지, 호가, ID 순으로 limit개씩 돌려준다.
+// Page는 실제 직접 등록·네이버 매물을 단지, 호가, ID 순으로 돌려준다. 예시는 제외한다.
 // limit이 0 이하면 50, 200을 넘으면 200으로 맞춘다. 정렬이 고정이라 offset이 안정적이다.
 func (s *ListingStore) Page(ctx context.Context, complexName string, limit, offset int) (ListingPage, error) {
 	if limit <= 0 {
@@ -375,14 +376,15 @@ func (s *ListingStore) Page(ctx context.Context, complexName string, limit, offs
 	page := ListingPage{Listings: []Listing{}, Limit: limit, Offset: offset}
 	if err := s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM b2c_listings
-		WHERE status = 'active' AND ($1 = '' OR complex_name = $1)`, complexName).Scan(&page.Total); err != nil {
+		WHERE status = 'active' AND registered_by NOT LIKE 'sample:%'
+		AND ($1 = '' OR complex_name = $1)`, complexName).Scan(&page.Total); err != nil {
 		return ListingPage{}, err
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
-		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by, external_source
 		FROM b2c_listings
-		WHERE status = 'active' AND ($1 = '' OR complex_name = $1)
+		WHERE status = 'active' AND registered_by NOT LIKE 'sample:%' AND ($1 = '' OR complex_name = $1)
 		ORDER BY complex_name, asking_manwon, id
 		LIMIT $2 OFFSET $3`, complexName, limit, offset)
 	if err != nil {
@@ -406,9 +408,10 @@ func (s *ListingStore) Page(ctx context.Context, complexName string, limit, offs
 func (s *ListingStore) Sold(ctx context.Context, complexName string, since time.Time) ([]Listing, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
-		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by, external_source
 		FROM b2c_listings
-		WHERE status = 'sold' AND updated_at >= $1 AND ($2 = '' OR complex_name = $2)
+		WHERE status = 'sold' AND external_source IS NULL AND registered_by NOT LIKE 'sample:%'
+		AND updated_at >= $1 AND ($2 = '' OR complex_name = $2)
 		ORDER BY updated_at DESC
 		LIMIT $3`, since, complexName, listingPageDefault)
 	if err != nil {
@@ -423,13 +426,17 @@ func scanListings(rows pgx.Rows) ([]Listing, error) {
 	for rows.Next() {
 		var id int64
 		var by string
+		var externalSource *string
 		l := Listing{Source: DirectListingSourceName}
 		if err := rows.Scan(&id, &l.ComplexName, &l.TypeName, &l.AskingManwon, &l.Floor, &l.Lon, &l.Lat,
-			&l.FirstSeen, &l.LastSeen, &by); err != nil {
+			&l.FirstSeen, &l.LastSeen, &by, &externalSource); err != nil {
 			return nil, err
 		}
 		if strings.HasPrefix(by, SampleRegistrantPrefix) {
 			l.Source = SampleListingSourceName
+		}
+		if externalSource != nil {
+			l.Source = *externalSource
 		}
 		l.ID = strconv.FormatInt(id, 10)
 		out = append(out, l)
