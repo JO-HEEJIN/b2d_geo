@@ -170,7 +170,9 @@ $RUN rone-sync                                       # 백필: 2005-01부터 이
 
 cron이 아니라 systemd 타이머가 매분 `docker compose run --rm --no-deps b2c-listings`를 한 번 돌린다.
 `Persistent=true`라서 서버가 꺼져 있던 사이 놓친 실행은 부팅 직후 바로 따라잡는다. 매물 원천은
-`b2c_listings`(직접 등록)뿐이다(ADR 0002). 서비스 정의는 서버 `docker-compose.override.yml`의
+`NaverListingSource`이며, `deploy/.env`의 `B2C_COMPLEX_NO`에 조회할 네이버 단지 번호를 지정한다.
+서버 override의 `b2c-listings.environment`에도 `B2C_COMPLEX_NO: ${B2C_COMPLEX_NO:-}`를 넣어 컨테이너에 전달한다.
+서비스 정의는 서버 `docker-compose.override.yml`의
 `b2c-listings`(profile oneshot, 이미지 태그를 app과 같이 올린다). 서버에는 `ned`가 없으므로 유닛 파일은
 이미지가 출력한 내용을 그대로 설치한다.
 
@@ -186,7 +188,36 @@ systemctl list-timers b2c-listings.timer                      # 다음 실행 �
 journalctl -u b2c-listings -n 20                              # "b2c-listings: added=N gone=M"
 ```
 
-이미지를 올릴 때는 override의 app·b2c-listings 태그를 함께 바꾼다. 타이머 중지: `sudo systemctl disable --now b2c-listings.timer`.
+릴리스할 때는 override의 app·b2c-listings 이미지 태그를 함께 바꾼다. 이 저장소는 서버·ETL이 들어 있는
+`ghcr.io/jo-heejin/b2d_geo` 단일 이미지를 발행하므로 두 서비스에 같은 `sha-<NEW>`를 지정한다.
+`<NEW>`는 실제 빌드·게시된 커밋의 짧은 SHA로 바꾼다. 현재 release workflow는 main 푸시 또는 `v*` 태그로
+실행되므로 b2c 브랜치에 푸시하는 것만으로 새 이미지가 발행되지는 않는다.
+
+```yaml
+# 서버 docker-compose.override.yml의 해당 항목
+services:
+  app:
+    image: ghcr.io/jo-heejin/b2d_geo:sha-<NEW>
+  b2c-listings:
+    image: ghcr.io/jo-heejin/b2d_geo:sha-<NEW>
+    environment:
+      B2C_COMPLEX_NO: ${B2C_COMPLEX_NO:-}
+```
+
+서버에서 oneshot 프로필의 이미지도 명시적으로 pull하고 앱만 재생성한다. 타이머는 다음 실행부터 새 이미지로
+`b2c-listings`를 실행한다. 즉시 한 번 확인하려면 서비스를 직접 시작한다.
+
+```sh
+cd ~/b2d_geo/deploy
+docker compose --profile oneshot pull app b2c-listings
+docker compose up -d app
+sudo systemctl start b2c-listings.service
+sudo systemctl status b2c-listings.service --no-pager
+journalctl -u b2c-listings.service -n 50 --no-pager
+# 기대 로그: "b2c-listings: added=N gone=M", 서비스 실행 결과는 성공
+```
+
+타이머 중지: `sudo systemctl disable --now b2c-listings.timer`.
 
 ## 7. "진짜 서비스" 백로그 (M1에서 이어서)
 
