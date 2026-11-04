@@ -51,7 +51,7 @@ func TestNaverListingSourceFetchPagesAndMapsListings(t *testing.T) {
 			}
 			switch calls {
 			case 1:
-				return naverResponse(http.StatusOK, `{"totalCount":"2","articleList":[{"articleNo":"101","articleName":"동탄역시범","tradeTypeName":"전세","dealOrWarrantPrc":"85,000","floorInfo":"12/25","longitude":"127.0961","latitude":37.2003}]}`), nil
+				return naverResponse(http.StatusOK, `{"totalCount":"2","articleList":[{"articleNo":"101","articleName":"동탄역시범","areaName":"127A","tradeTypeName":"전세","dealOrWarrantPrc":"85,000","floorInfo":"12/25","longitude":"127.0961","latitude":37.2003}]}`), nil
 			case 2:
 				return naverResponse(http.StatusOK, `{"totalCount":2,"articleList":[{"articleNo":102,"complexName":"잠실아파트","rentPrc":"3,000","floorInfo":"중/고","longitude":127.09,"latitude":"37.51"}]}`), nil
 			default:
@@ -68,7 +68,7 @@ func TestNaverListingSourceFetchPagesAndMapsListings(t *testing.T) {
 		t.Fatalf("calls=%d listings=%+v", calls, got)
 	}
 	want := []Listing{
-		{ID: "101", ComplexName: "동탄역시범", TypeName: "전세", AskingManwon: 85000, Floor: 12, Lon: 127.0961, Lat: 37.2003, Source: "naver"},
+		{ID: "101", ComplexName: "동탄역시범", TypeName: "127A", AskingManwon: 85000, Floor: 12, Lon: 127.0961, Lat: 37.2003, Source: "naver"},
 		{ID: "102", ComplexName: "잠실아파트", AskingManwon: 3000, Lon: 127.09, Lat: 37.51, Source: "naver"},
 	}
 	for i, l := range got {

@@ -206,7 +206,19 @@ func (h *Handler) remainingListings(w http.ResponseWriter, r *http.Request) {
 	if sold == nil {
 		sold = []Listing{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"complex": complexName, "remaining": page, "recently_sold": sold})
+	statuses, err := h.listings.NaverSyncStatuses(r.Context(), complexName)
+	if err != nil {
+		log.Printf("b2c Naver status: %v", err)
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	changes, err := h.listings.NaverRecentChanges(r.Context(), complexName)
+	if err != nil {
+		log.Printf("b2c Naver changes: %v", err)
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"complex": complexName, "remaining": page, "recently_sold": sold, "naver_sync": statuses, "naver_changes": changes})
 }
 
 // pageParams는 limit, offset 쿼리를 읽는다. 비어 있으면 0(기본값 적용)이다.
