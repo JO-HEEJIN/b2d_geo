@@ -27,11 +27,17 @@
 
 - 일반 사용자용 기능은 `src/b2c/` 한 패키지에 있다. 모듈 번호는 `Keywords` 사전의 키이고
   파일 이름 앞 숫자와 같다: 1 district, 2 floor_plan, 3 recent_trades, 4 infra_map,
-  5 remaining_listings. 모듈 하나는 파일 하나, 기능은 구조체 메서드다.
+  5 remaining_listings. 모듈 하나는 파일 하나, 기능은 구조체 메서드다. `http.go`는 API 연결만 한다.
 - 공통 원칙: 후보를 추려 줄이지 않고 전부 보여준다. 판단 문구는 사람이 느끼는 감정
   (조급함, 남들도 샀다는 안도감, 계약 뒤 수리비)을 따른다.
 - 구역은 송도동·1동탄·2동탄·하남·용인 수지·수원·잠실 일곱 곳뿐이다. 1/2동탄은 법정동으로 가른다.
-- 서버·API에는 아직 연결되지 않았다. 실거래(TradeSource), 지하철·버스(FacilitySource),
-  매물(ListingSource) 원천은 인터페이스만 있고, 편의점·병원은 `internal/places.Nearby`를 쓴다.
-- 남은 매물 원천은 계약 피드와 직접 등록만 허용한다([ADR 0002](docs/adr/0002-b2c-listing-source-no-scraping.md)).
-  갱신은 systemd 타이머(매분, `Persistent=true`)로 한다.
+- API는 `/v1/b2c/*`다. 판단 문구가 있어 핸들러는 `internal/api`(사실 반환 경계)가 아닌 `src/b2c`에 있고,
+  `server.go`는 경로만 붙인다. 읽기는 `geo` scope, 등록(`/v1/b2c/write/*`)은 `b2c_write` scope가 필요하다.
+- 실거래: 국토부 아파트 매매 API(`RTMSDataSvcAptTrade`, env `MOLIT_API_KEY`)를 월별·페이지별로 부르고 6시간 캐시한다.
+- 인프라: 버스정류장은 `transit_stops`(국토부 전국 버스정류장 CSV, `b2d-etl transit-bus`)에서,
+  편의점(G20405)·병원(Q10101·Q10102·Q10201)은 `places`에서 찾는다. 지하철역은 아직 적재 전이다.
+  도보시간 = 직선거리 x 1.3 / 분당 80m.
+- 평면 타입은 `b2c_floor_plans`, 매물은 `b2c_listings`(직접 등록만)에 있다. 매물 원천은 계약 피드와 직접 등록만
+  허용한다([ADR 0002](docs/adr/0002-b2c-listing-source-no-scraping.md)).
+- 남은 매물 갱신은 서버 systemd 타이머(매분, `Persistent=true`)가 compose `b2c-listings`(profile oneshot)를
+  한 번씩 돌린다. 상태 파일은 호스트 `/var/lib/b2c-listings`. 설치 절차는 deploy/OPS.md 6-4.
