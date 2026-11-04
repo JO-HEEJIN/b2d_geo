@@ -575,3 +575,69 @@ Limits: a candidate does not know bathroom position or living room layout, and t
   - `GET /floor-plans` returns the 6 types and a tour starting at 1621동 101호.
 
 
+## 17. `feat/b2c-trade-disclaimer` ([#36](https://github.com/JO-HEEJIN/b2d_geo/pull/36))
+
+### 커밋
+
+- `8513d22` feat(b2c): attach a reporting-lag disclaimer to every trade verdict
+
+  Trades only have to be reported within 30 days of the contract, so the
+  latest month is always undercounted and the recent three months can look
+  lower than they are. Every verdict now carries that notice instead of
+  adjusting the numbers.
+
+### Description
+
+Module 3 (`recent_trades`)
+
+#### Why
+Apartment trades must be reported within 30 days of the contract. The latest month is always undercounted, so "recent 3 months vs the 3 months before" can look like a drop. In the live run, 동탄2하우스디더레이크 showed 22 vs 58. By decision, the numbers stay as they are and a disclaimer is added.
+
+#### Change
+`BuyerVerdict.Disclaimer` is always set: "실거래는 계약 후 30일 안에 신고됩니다. 최근 한 달 거래는 아직 덜 집계되어 있어, 최근 3개월 거래 수가 실제보다 적게 보일 수 있습니다." It is returned as `verdict.disclaimer` from `/v1/b2c/trades`.
+
+#### Verification
+`go test ./src/b2c`: the disclaimer is present even on a dormant verdict with no cautions.
+
+
+## 18. `feat/b2c-listings-csv-import` ([#37](https://github.com/JO-HEEJIN/b2d_geo/pull/37))
+
+### 커밋
+
+- `457be41` feat(b2c): bulk-register hand-collected listings from CSV
+
+  User tests need many listings before any licensed feed exists. People
+  can now collect test listings into a spreadsheet and upload it in one go
+  through b2d-etl b2c-listings-import or the b2c_write API. Korean or
+  English headers and Excel's CP949 encoding are accepted, and a file with
+  any bad row inserts nothing and reports each line.
+
+### Description
+
+Module 5 (`remaining_listings`), Refs #18
+
+#### Why
+User tests need a set of listings that looks realistic before a licensed listing feed is in place. Automated collection from Naver Land was not built: `land.naver.com/robots.txt` is `Disallow: /`, and the project rule (directive 1.1, ADR 0002) forbids it. The test set is collected by people instead and uploaded in one go.
+
+#### Changes
+- `ParseListingsCSV`:
+  - Headers can be English (`complex_name, type_name, asking_manwon, floor, lon, lat`) or Korean (`단지명, 타입, 호가(만원), 층, 경도, 위도`).
+  - UTF-8 with or without BOM, and **CP949 as saved by Excel**, are both read.
+  - Prices may contain thousand separators ("99,000").
+  - Up to 2,000 rows. Bad rows are reported with their line number and reason.
+- `ListingStore.RegisterMany`: one transaction, so either everything goes in or nothing does.
+- `POST /v1/b2c/write/listings/import` (`b2c_write`, CSV body up to 1 MB). If any row is bad, nothing is inserted and the response is 400 with each line listed.
+- `b2d-etl b2c-listings-import --registrant <name> <csv>` (`registered_by = csv:<name>`).
+- Imported listings flow into `/v1/b2c/listings` pages and the minute timer like any other registration.
+
+#### Verification
+- Unit tests: Korean headers with BOM, quoted thousand separator, missing name, zero price, non-numeric floor, out-of-range coordinates (lines 4-7 rejected), CP949 file, wrong header, 2,000-row limit.
+- PostGIS test: the bulk insert shows up in `Page`.
+- Local server:
+  - Reader key gets 403.
+  - A CP949 CSV with the writer key gets 201 with `inserted=2`.
+  - A bad row gets 400 with line 2 and nothing inserted.
+  - The listing page shows both rows in price order.
+  - The CLI prints `inserted=2`.
+
+

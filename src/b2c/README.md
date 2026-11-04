@@ -101,7 +101,7 @@
 | GET | `/v1/b2c/infra?lon=&lat=` | 4 |
 | GET | `/v1/b2c/listings?complex=&limit=&offset=` | 5 (페이지: limit 1-200, 기본 50, `next_offset`) |
 | POST | `/v1/b2c/write/floor-plans`, `/v1/b2c/write/floor-plans/from-register` | 2 등록·건축물대장 후보 |
-| POST | `/v1/b2c/write/listings`, `/v1/b2c/write/listings/{id}/close` | 5 등록·팔림 |
+| POST | `/v1/b2c/write/listings`, `/v1/b2c/write/listings/import` (CSV), `/v1/b2c/write/listings/{id}/close` | 5 등록·일괄 등록·팔림 |
 
 ## 데이터 원천
 
@@ -112,7 +112,20 @@
 | 4 버스 | 국토부 전국 버스정류장 위치정보 CSV | 적재 명령 `b2d-etl transit-bus` |
 | 4 지하철 | 전국도시철도역사정보표준데이터 XLSX | 적재 명령 `b2d-etl transit-subway` (동탄역 SRT·GTX-A 없음) |
 | 4 편의점·병원 | 소상공인 상가정보 (`places`) | 사용 중 |
-| 5 매물 | `b2c_listings` (중개사·집주인 직접 등록) | 사용 중. 계약 피드는 사업 협의 |
+| 5 매물 | `b2c_listings` (중개사·집주인 직접 등록, 테스트용 CSV 일괄 등록) | 사용 중. 계약 피드는 사업 협의. 네이버 부동산은 robots.txt `Disallow: /`라 자동 수집하지 않는다 |
+
+## 테스트 매물 CSV
+
+엑셀에서 아래 열로 정리해 CSV로 저장한다(UTF-8 또는 엑셀 기본 CP949 모두 된다). 단지명과 호가는 필수다.
+
+```
+단지명,타입,호가(만원),층,경도,위도
+동탄2하우스디더레이크,84A,"105,000",15,,
+```
+
+`b2d-etl b2c-listings-import --registrant <이름> 매물.csv` 또는 `b2c_write` 키로
+`curl -X POST -H "X-API-Key: ..." --data-binary @매물.csv https://api.birth2death.com/v1/b2c/write/listings/import`.
+잘못된 행이 하나라도 있으면 아무것도 넣지 않고 줄 번호를 알려준다.
 
 ## 데이터 규칙
 
