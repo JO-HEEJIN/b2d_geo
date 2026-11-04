@@ -163,3 +163,59 @@ func (s *PlacesSource) Nearby(ctx context.Context, lon, lat, radiusM float64, li
 	}
 	return out, nil
 }
+
+// 상가정보 업종 소분류 코드. 2026-09판 전국 실물에서 확인했다.
+var (
+	convenienceCodes = []string{"G20405"}                     // 편의점
+	hospitalCodes    = []string{"Q10101", "Q10102", "Q10201"} // 종합병원, 일반병원, 내과/소아과 의원
+)
+
+// TransitSource는 transit_stops 테이블에서 지하철역 또는 버스정류장을 찾는다.
+type TransitSource struct {
+	pool *pgxpool.Pool
+	kind InfraKind
+}
+
+// NewTransitSource는 kind(InfraSubway 또는 InfraBusStop)의 정류장 원천을 만든다.
+func NewTransitSource(pool *pgxpool.Pool, kind InfraKind) *TransitSource {
+	return &TransitSource{pool: pool, kind: kind}
+}
+
+// Nearby는 반경 안 정류장을 가까운 순으로 돌려준다. KNN 정렬은 gist 인덱스를 탄다.
+func (s *TransitSource) Nearby(ctx context.Context, lon, lat, radiusM float64, limit int) ([]Facility, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT name, COALESCE(line, ''), ST_X(geom), ST_Y(geom)
+		FROM transit_stops
+		WHERE kind = $1
+		  AND geom && ST_Expand(ST_SetSRID(ST_MakePoint($2, $3), 4326), $6)
+		  AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography, $4)
+		ORDER BY geom <-> ST_SetSRID(ST_MakePoint($2, $3), 4326)
+		LIMIT $5`, string(s.kind), lon, lat, radiusM, limit, radiusM/85000.0) // 상자 반폭 근거는 revgeo.RadiusDeg
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Facility
+	for rows.Next() {
+		var f Facility
+		if err := rows.Scan(&f.Name, &f.Address, &f.Lon, &f.Lat); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// NewInfraMapFromDB는 b2d_geo DB의 네 가지 원천을 모두 연결한 인프라맵을 만든다.
+// 지하철역은 transit_stops에 적재된 뒤부터 나오고, 그 전에는 "반경 안에 없음"으로 나온다.
+func NewInfraMapFromDB(pool *pgxpool.Pool) *InfraMap {
+	return NewInfraMap(map[InfraKind]FacilitySource{
+		InfraSubway:      NewTransitSource(pool, InfraSubway),
+		InfraBusStop:     NewTransitSource(pool, InfraBusStop),
+		InfraConvenience: NewPlacesSource(pool, convenienceCodes...),
+		InfraHospital:    NewPlacesSource(pool, hospitalCodes...),
+	})
+}

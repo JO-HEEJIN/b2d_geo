@@ -27,13 +27,14 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/rone"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/sbiz"
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/standardlots"
+	"github.com/JO-HEEJIN/b2d_geo/internal/etl/transit"
 	"github.com/JO-HEEJIN/b2d_geo/internal/store"
 	"github.com/JO-HEEJIN/b2d_geo/migrations"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -117,6 +118,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "rone-sync failed:", err)
 			os.Exit(1)
 		}
+	case "transit-bus":
+		if err := runTransitBus(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "transit-bus failed:", err)
+			os.Exit(1)
+		}
 	case "juso":
 		if err := runJuso(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "juso failed:", err)
@@ -190,6 +196,34 @@ func runJuso(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("unknown juso action: %s", args[0])
 	}
+}
+
+// runTransitBus는 국토교통부 전국 버스정류장 위치정보 CSV를 transit_stops에 적재한다.
+func runTransitBus(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("transit-bus", flag.ContinueOnError)
+	version := fs.String("version", "", "자료 기준일 YYYY-MM-DD (파일명의 날짜, 예: 2026-10-20)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || *version == "" {
+		return fmt.Errorf("usage: b2d-etl transit-bus --version YYYY-MM-DD <csv>")
+	}
+	f, err := os.Open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	inserted, skipped, err := transit.LoadBus(ctx, pool, f, *version)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("transit-bus load: inserted=%d skipped=%d source_version=%s\n", inserted, skipped, *version)
+	return nil
 }
 
 func runSbiz(ctx context.Context, args []string) error {
