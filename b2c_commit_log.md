@@ -641,3 +641,54 @@ User tests need a set of listings that looks realistic before a licensed listing
   - The CLI prints `inserted=2`.
 
 
+## 19. `feat/b2c-page` ([#40](https://github.com/JO-HEEJIN/b2d_geo/pull/40))
+
+### 커밋
+
+- `b9c6811` feat(b2c): add the home browsing page for non-developer buyers
+
+  Adds /b2c.html, linked from the main menu. A buyer picks one of the seven
+  zones and sees every complex that traded in the last six months, busiest
+  first, on a list and a map. Opening a complex shows the liveliness
+  verdict with the reporting-lag notice, recent trades, walking minutes to
+  subway, bus, convenience store and hospital, floor plan types with the
+  units to visit, and all remaining listings.
+  
+  The page is backed by two new endpoints. One groups a zone's trades by
+  complex and locates each complex through the MOIS legal dong codes and
+  the parcel table. The other returns everything for one complex in a
+  single call and builds floor plan candidates from the building register
+  when none exist, capped at 40 complexes a day.
+
+### Description
+
+#### Why
+Until now B2C existed only as an API (`/v1/b2c/*`), so there was no page a non-developer buyer could open. This adds one.
+
+#### Page: `/b2c.html` ("집 구경", added to the menus on `/` and `/map.html`)
+1. **Pick a zone:** seven chips. The selection is kept in the URL hash, e.g. `/b2c.html#dongtan2`.
+2. **Complex list + map:** every complex that traded in the last 6 months, busiest first, none dropped. Each row shows a level badge (바로 팔림 / 꾸준히 거래 / 거래 드묾), latest price, building age, 6-month count and average interval. On the map, marker color is the level and marker size is the trade count.
+3. **Complex detail:**
+   - Verdict, with the cautions and the reporting-lag disclaimer.
+   - 6-month count, average interval, days since the last trade.
+   - Walking minutes to subway / bus / convenience store / hospital, also drawn as lines on the map.
+   - Floor plan types: units with each layout, plus the on-site checklist.
+   - Recent trades, with canceled ones struck through.
+   - All remaining listings, with a "더 보기" button that pages through the rest.
+   - Listings sold in the last 7 days.
+- Uses the public demo key from `/config.json`, so no login is needed. Colors come from the site tokens and work in light and dark themes. On narrow screens the map sits on top and the list below. No emoji.
+
+#### Backend
+- `GET /v1/b2c/zones/{key}/complexes`: collects 6 months of trades for every district code in the zone (Suwon has 4 gu). Dongtan 1 and 2 share Dongtan-gu, so they are split by dong name. Groups by (district code, dong, lot number, complex name), sorted by trade count, and every complex is returned.
+- Locating a complex: dong name → 10-digit legal dong code from the **MOIS legal dong code API** (codes kept per region for 24 h) → PNU → `ST_PointOnSurface` from `parcels`.
+  - Production parcels already use the new Dongtan-gu codes (`41597…`), checked read-only.
+  - Zone district codes checked with the same API: 28185, 41597, 41450, 41465, 41111/41113/41115/41117, 11710.
+- `GET /v1/b2c/complex?zone=&sgg=&umd=&jibun=&name=`: returns verdict, last 30 trades, walking summary, floor plans, the first listings page and recent sales in one call. If the complex has no floor plan types yet, candidates are built from the building register, **up to 40 complexes per day (KST)** so the public demo key cannot burn the data.go.kr quota.
+- Trades now carry `sgg_cd`, `umd_nm` and `jibun`. `Zone` gains `lawd_codes` and `region`.
+
+#### Verification
+- Unit tests: `PNU` (plain, bu-ji, 산, invalid), `Zone`/`InZone`, `LegalDongResolver` (keeps only dong-level rows, second call served from memory), `Complexes` (zone filter, canceled count, latest price, order), `dailyCap` (limit and reset on a new day). Existing `web` tests pass for the new page: brand assets and the shared stylesheet key.
+- `node --check web/public/b2c.js`, `go vet ./...`, `go build ./...`.
+- **Not run locally:** the dev machine is out of memory for Docker, so there was no local PostGIS. As agreed, the page is checked in production right after deploy.
+
+

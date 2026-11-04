@@ -88,6 +88,12 @@
 네이버를 이기는 방법은 네이버 데이터를 긁는 것이 아니다. 매물 원천은 이용 계약이 있는
 피드나 중개사·집주인의 직접 등록만 쓴다 (지시서 1.1, ADR 0002).
 
+## 화면
+
+`https://api.birth2death.com/b2c.html` (메인 메뉴 "집 구경"). 구역을 고르면 그 동네에서 최근 6개월 실제로 거래된
+단지가 전부 나오고, 단지를 누르면 판단·실거래·도보시간·구조·남은 매물을 한 화면에서 본다. `#dongtan2`처럼 주소 뒤에
+구역 키를 붙이면 바로 그 구역이 열린다.
+
 ## API
 
 읽기는 `geo` scope, 등록은 `b2c_write` scope 키가 필요하다 (`b2d-etl apikey create --scopes geo,b2c_write`).
@@ -99,6 +105,7 @@
 | GET | `/v1/b2c/floor-plans?complex_id=` | 2 |
 | GET | `/v1/b2c/trades?lawd_cd=&complex=&build_year=` | 3 |
 | GET | `/v1/b2c/infra?lon=&lat=` | 4 |
+| GET | `/v1/b2c/zones/{key}/complexes`, `/v1/b2c/complex?zone=&sgg=&umd=&jibun=&name=` | 화면용 (구역 단지 순위, 단지 상세) |
 | GET | `/v1/b2c/listings?complex=&limit=&offset=` | 5 (페이지: limit 1-200, 기본 50, `next_offset`) |
 | POST | `/v1/b2c/write/floor-plans`, `/v1/b2c/write/floor-plans/from-register` | 2 등록·건축물대장 후보 |
 | POST | `/v1/b2c/write/listings`, `/v1/b2c/write/listings/import` (CSV), `/v1/b2c/write/listings/{id}/close` | 5 등록·일괄 등록·팔림 |
