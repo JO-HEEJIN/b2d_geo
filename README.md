@@ -1,6 +1,6 @@
 # b2d_geo
 
-> b2c 브랜치: 일반 사용자(B2C)용 기능은 [`src/b2c/README.md`](src/b2c/README.md)를 본다.
+> 일반 사용자(B2C)용 기능은 [`src/b2c/README.md`](src/b2c/README.md)를 본다.
 
 공공데이터 기반 위치 서비스 엔진. 카카오/네이버 API 의존 없이 geocoding,
 reverse geocoding, keyword search, places를 제공하고, 부동산 특화 기능
