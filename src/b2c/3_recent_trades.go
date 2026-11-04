@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,9 @@ type AptTrade struct {
 	Floor       int       `json:"floor"`
 	BuildYear   int       `json:"build_year"`
 	Canceled    bool      `json:"canceled"` // 해제된 거래
+	SggCd       string    `json:"sgg_cd"`
+	UmdNm       string    `json:"umd_nm"` // 법정동 이름
+	Jibun       string    `json:"jibun"`
 }
 
 // TradeSource는 실거래 원천이다. lawdCode는 시군구 5자리 법정동코드다.
@@ -205,6 +209,9 @@ type molitAptItem struct {
 	Floor      string `xml:"floor"`
 	BuildYear  string `xml:"buildYear"`
 	CdealType  string `xml:"cdealType"` // 해제여부. 해제된 거래는 "O"
+	SggCd      string `xml:"sggCd"`
+	UmdNm      string `xml:"umdNm"`
+	Jibun      string `xml:"jibun"`
 }
 
 type molitAptResp struct {
@@ -299,8 +306,59 @@ func (it molitAptItem) trade() (AptTrade, bool) {
 		Floor:       floor,
 		BuildYear:   built,
 		Canceled:    strings.TrimSpace(it.CdealType) == "O",
+		SggCd:       strings.TrimSpace(it.SggCd),
+		UmdNm:       strings.TrimSpace(it.UmdNm),
+		Jibun:       strings.TrimSpace(it.Jibun),
 	}, true
 }
 
 // kstZone은 거래일 기준 시간대다. distroless 이미지에 tzdata가 없어도 되도록 고정 오프셋을 쓴다.
 var kstZone = time.FixedZone("KST", 9*60*60)
+
+// ComplexSummary는 한 단지의 6개월 거래 요약이다. 구역 화면의 단지 목록 한 줄이다.
+type ComplexSummary struct {
+	Name         string        `json:"name"`
+	SggCd        string        `json:"sgg_cd"`
+	UmdNm        string        `json:"umd_nm"`
+	Jibun        string        `json:"jibun"`
+	BuildYear    int           `json:"build_year"`
+	Activity     TradeActivity `json:"activity"`
+	LatestPrice  int           `json:"latest_price_manwon"` // 가장 최근 (해제 아닌) 거래가
+	LatestAreaM2 float64       `json:"latest_area_m2"`
+	LatestDate   time.Time     `json:"latest_date"`
+	Place        *ComplexPlace `json:"place"` // 위치를 찾았으면 채운다
+}
+
+// Complexes는 거래를 단지(시군구, 법정동, 지번, 단지명)별로 묶어 6개월 활동을 센다.
+// keep이 nil이 아니면 그 조건에 맞는 거래만 쓴다. 거래 수가 많은 순으로 전부 돌려준다(줄이지 않는다).
+func (a *RecentTradeAnalyzer) Complexes(trades []AptTrade, keep func(AptTrade) bool) []ComplexSummary {
+	type key struct{ sgg, umd, jibun, name string }
+	groups := map[key][]AptTrade{}
+	for _, t := range trades {
+		if keep != nil && !keep(t) {
+			continue
+		}
+		k := key{t.SggCd, t.UmdNm, t.Jibun, t.ComplexName}
+		groups[k] = append(groups[k], t)
+	}
+	out := make([]ComplexSummary, 0, len(groups))
+	for k, g := range groups {
+		cs := ComplexSummary{Name: k.name, SggCd: k.sgg, UmdNm: k.umd, Jibun: k.jibun, Activity: a.Activity(g, "")}
+		for _, t := range g {
+			if t.BuildYear > 0 {
+				cs.BuildYear = t.BuildYear
+			}
+			if !t.Canceled && t.DealDate.After(cs.LatestDate) {
+				cs.LatestDate, cs.LatestPrice, cs.LatestAreaM2 = t.DealDate, t.PriceManwon, t.AreaM2
+			}
+		}
+		out = append(out, cs)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Activity.Count != out[j].Activity.Count {
+			return out[i].Activity.Count > out[j].Activity.Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}

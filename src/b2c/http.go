@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -26,6 +27,9 @@ type Handler struct {
 	infra     *InfraMap
 	plans     *FloorPlanStore
 	register  *BuildingRegisterSource
+	dongs     *LegalDongResolver
+	locator   *ComplexLocator
+	autoPlans *dailyCap
 	listings  *ListingStore
 	mux       *http.ServeMux
 }
@@ -43,6 +47,9 @@ func NewHandler(pool *pgxpool.Pool, molitKey string) *Handler {
 		infra:     NewInfraMapFromDB(pool),
 		plans:     NewFloorPlanStore(pool),
 		register:  &BuildingRegisterSource{Key: molitKey},
+		dongs:     &LegalDongResolver{Key: molitKey},
+		locator:   NewComplexLocator(pool),
+		autoPlans: &dailyCap{max: autoFloorPlansPerDay},
 		listings:  NewListingStore(pool),
 		mux:       http.NewServeMux(),
 	}
@@ -51,6 +58,8 @@ func NewHandler(pool *pgxpool.Pool, molitKey string) *Handler {
 	h.mux.HandleFunc("GET /v1/b2c/district", h.district)
 	h.mux.HandleFunc("GET /v1/b2c/trades", h.recentTrades)
 	h.mux.HandleFunc("GET /v1/b2c/infra", h.infraSummary)
+	h.mux.HandleFunc("GET /v1/b2c/zones/{key}/complexes", h.zoneComplexes)
+	h.mux.HandleFunc("GET /v1/b2c/complex", h.complexDetail)
 	h.mux.HandleFunc("GET /v1/b2c/floor-plans", h.floorPlans)
 	h.mux.HandleFunc("GET /v1/b2c/listings", h.remainingListings)
 	h.mux.HandleFunc("POST /v1/b2c/write/floor-plans", h.saveFloorPlan)
@@ -321,6 +330,182 @@ func (h *Handler) closeListing(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, map[string]any{"id": r.PathValue("id"), "status": body.Status})
 	}
+}
+
+// autoFloorPlansPerDay는 단지 상세를 열 때 건축물대장에서 평면 후보를 새로 만드는 하루 최대 단지 수다.
+// 한 단지가 data.go.kr 수십 번 호출(실측 49번)이라 공개 데모 키로 일일 한도를 다 쓰지 않게 막는다.
+const autoFloorPlansPerDay = 40
+
+// dailyCap은 KST 하루 단위로 횟수를 센다.
+type dailyCap struct {
+	mu  sync.Mutex
+	max int
+	day string
+	n   int
+}
+
+func (c *dailyCap) take() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	today := time.Now().In(kstZone).Format("2006-01-02")
+	if c.day != today {
+		c.day, c.n = today, 0
+	}
+	if c.n >= c.max {
+		return false
+	}
+	c.n++
+	return true
+}
+
+// zoneComplexes: 구역의 6개월 실거래를 단지별로 묶어 거래 수 순으로 전부 돌려준다. 위치를 찾은 단지는 좌표를 붙인다.
+func (h *Handler) zoneComplexes(w http.ResponseWriter, r *http.Request) {
+	z, ok := h.districts.Zone(r.PathValue("key"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "unknown zone")
+		return
+	}
+	if h.trades.source == nil {
+		writeErr(w, http.StatusServiceUnavailable, "MOLIT_API_KEY not set: recent trades disabled")
+		return
+	}
+	var trades []AptTrade
+	for _, lawd := range z.Lawd {
+		t, err := h.trades.Fetch(r.Context(), lawd)
+		if err != nil {
+			log.Printf("b2c zone %s trades %s: %v", z.Key, lawd, err)
+			writeErr(w, http.StatusBadGateway, "upstream unavailable")
+			return
+		}
+		trades = append(trades, t...)
+	}
+	complexes := h.trades.Complexes(trades, func(t AptTrade) bool { return z.InZone(t.UmdNm) })
+	h.attachPlaces(r.Context(), z, complexes)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"zone": z, "complexes": complexes, "disclaimer": reportingLagDisclaimer,
+		"source": "rt.molit.go.kr (RTMSDataSvcAptTrade)",
+	})
+}
+
+// attachPlaces는 단지마다 법정동코드 -> PNU -> parcels 대표점을 찾아 붙인다. 못 찾으면 비워 둔다.
+func (h *Handler) attachPlaces(ctx context.Context, z Zone, complexes []ComplexSummary) {
+	codes, err := h.dongs.Codes(ctx, z.Region)
+	if err != nil {
+		log.Printf("b2c legal dong codes %s: %v", z.Region, err)
+		return
+	}
+	pnus := make([]string, len(complexes))
+	var all []string
+	for i, c := range complexes {
+		if bcode, ok := codes[c.SggCd+"|"+c.UmdNm]; ok {
+			if pnu, ok := PNU(bcode, c.Jibun); ok {
+				pnus[i] = pnu
+				all = append(all, pnu)
+			}
+		}
+	}
+	places, err := h.locator.Locate(ctx, all)
+	if err != nil {
+		log.Printf("b2c locate complexes: %v", err)
+		return
+	}
+	for i := range complexes {
+		if p, ok := places[pnus[i]]; ok {
+			complexes[i].Place = &p
+		}
+	}
+}
+
+// complexDetail: ?zone=&sgg=&umd=&jibun=&name=  한 단지의 판단, 최근 거래, 도보시간, 평면, 매물을 한 번에 준다.
+// 평면이 비어 있으면 건축물대장에서 후보를 만든다(하루 autoFloorPlansPerDay 단지까지).
+func (h *Handler) complexDetail(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	z, ok := h.districts.Zone(q.Get("zone"))
+	sgg, umd, jibun, name := q.Get("sgg"), q.Get("umd"), q.Get("jibun"), q.Get("name")
+	if !ok || len(sgg) != 5 || !digits(sgg) || umd == "" || name == "" {
+		writeErr(w, http.StatusBadRequest, "zone, sgg(5), umd, jibun, name required")
+		return
+	}
+	if h.trades.source == nil {
+		writeErr(w, http.StatusServiceUnavailable, "MOLIT_API_KEY not set: recent trades disabled")
+		return
+	}
+	all, err := h.trades.Fetch(r.Context(), sgg)
+	if err != nil {
+		log.Printf("b2c complex trades %s: %v", sgg, err)
+		writeErr(w, http.StatusBadGateway, "upstream unavailable")
+		return
+	}
+	var mine []AptTrade
+	for _, t := range all {
+		if t.ComplexName == name && t.UmdNm == umd && t.Jibun == jibun {
+			mine = append(mine, t)
+		}
+	}
+	sort.Slice(mine, func(i, j int) bool { return mine[i].DealDate.After(mine[j].DealDate) })
+	summary := ComplexSummary{Name: name, SggCd: sgg, UmdNm: umd, Jibun: jibun}
+	if cs := h.trades.Complexes(mine, nil); len(cs) == 1 {
+		summary = cs[0]
+	}
+	one := []ComplexSummary{summary}
+	h.attachPlaces(r.Context(), z, one)
+	summary = one[0]
+	resp := map[string]any{
+		"complex": summary,
+		"verdict": h.trades.Verdict(summary.Activity, summary.BuildYear),
+		"trades":  firstN(mine, 30),
+	}
+
+	if p := summary.Place; p != nil {
+		if lines, err := h.infra.Summary(r.Context(), p.Lon, p.Lat); err == nil {
+			resp["infra"] = lines
+		} else {
+			log.Printf("b2c complex infra: %v", err)
+		}
+		catalog, err := h.plans.Catalog(r.Context(), p.ComplexID)
+		if err == nil && len(catalog.Variants(p.ComplexID)) == 0 && h.register.Key != "" && h.autoPlans.take() {
+			if units, err := h.register.Units(r.Context(), p.PNU[:5], p.PNU[5:10], p.PNU[11:15], p.PNU[15:19]); err == nil {
+				if _, err := h.plans.SaveCandidates(r.Context(), catalog.CandidatesFromUnits(p.ComplexID, units)); err != nil {
+					log.Printf("b2c auto floor plans save: %v", err)
+				}
+				catalog, err = h.plans.Catalog(r.Context(), p.ComplexID)
+			} else {
+				log.Printf("b2c auto floor plans %s: %v", p.ComplexID, err)
+			}
+		}
+		if err == nil {
+			variants := catalog.Variants(p.ComplexID)
+			checklists := map[string][]string{}
+			for _, v := range variants {
+				checklists[v.TypeName] = catalog.ViewingChecklist(v)
+			}
+			if variants == nil {
+				variants = []FloorPlanVariant{}
+			}
+			resp["floor_plans"] = map[string]any{"complex_id": p.ComplexID, "variants": variants, "checklists": checklists}
+		}
+	}
+
+	if page, err := h.listings.Page(r.Context(), name, listingPageDefault, 0); err == nil {
+		resp["listings"] = page
+	}
+	if sold, err := h.listings.Sold(r.Context(), name, time.Now().Add(-goneKeep)); err == nil {
+		if sold == nil {
+			sold = []Listing{}
+		}
+		resp["recently_sold"] = sold
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func firstN(t []AptTrade, n int) []AptTrade {
+	if len(t) > n {
+		return t[:n]
+	}
+	if t == nil {
+		return []AptTrade{}
+	}
+	return t
 }
 
 // registrant는 등록자 식별자다. 인증된 API 키 ID를 쓴다.
