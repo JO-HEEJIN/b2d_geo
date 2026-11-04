@@ -39,6 +39,9 @@
   자동 후보 이름은 "59.95㎡ 02라인"(전용면적 소수 둘째 자리 + 라인)이다.
 - 매물 피드 전 유저 테스트용으로 단지마다 최근 실거래가 x 1.03의 예시 매물이 들어 있다(`registered_by = sample:<구역>`,
   API `source = "sample"`, 화면에 "예시" 표시). 2026-11-05 7개 구역 2,934건. 지우기: `b2d-etl b2c-listings-sample --zone all --purge`.
+- 매물 등록 화면은 `/b2c-register.html`(집 구경 메뉴 "매물 등록", noindex)이다. 사용자가 넣은 `b2c_write` 키는 그
+  브라우저 localStorage에만 두고, 단지는 실거래 단지명 그대로 고른다. 한 건 등록, CSV 일괄 등록, 내 매물(`GET
+  /v1/b2c/write/listings/mine`, 본인 것만)과 팔림·내림 처리를 한다.
 - API는 `/v1/b2c/*`다. 판단 문구가 있어 핸들러는 `internal/api`(사실 반환 경계)가 아닌 `src/b2c`에 있고,
   `server.go`는 경로만 붙인다. 읽기는 `geo` scope, 등록(`/v1/b2c/write/*`)은 `b2c_write` scope가 필요하다.
   남은 매물 목록은 `limit`(1-200, 기본 50)·`offset` 페이지로 나눠 주고 `next_offset`으로 끝까지 넘긴다.
@@ -55,8 +58,8 @@
   한 번에 올린다(`b2d-etl b2c-listings-import`, `POST /v1/b2c/write/listings/import`, UTF-8·CP949, 한글 헤더 허용).
 - 남은 매물 갱신은 서버 systemd 타이머(매분, `Persistent=true`)가 compose `b2c-listings`(profile oneshot)를
   한 번씩 돌린다. 상태 파일은 호스트 `/var/lib/b2c-listings`. 설치 절차는 deploy/OPS.md 6-4.
-- 운영 반영: app·b2c-listings 이미지 `sha-7815f0e`(2026-11-05, `/b2c.html` 포함), 마이그레이션 014~016, 버스정류장 213,985건
+- 운영 반영: app·b2c-listings 이미지 `sha-46ab7ed`(2026-11-05, `/b2c.html`·`/b2c-register.html` 포함), 마이그레이션 014~016, 버스정류장 213,985건
   (2026-10-20판), 지하철역 1,094건(2026-06-30판), 동탄역 신미주 평면 후보 6개, `b2c-listings.timer` 가동.
-  ned-sync는 `sha-d41aab8` 그대로. 직전 override는 `docker-compose.override.yml.pre-7815f0e`.
+  ned-sync는 `sha-d41aab8` 그대로. 직전 override는 `docker-compose.override.yml.pre-46ab7ed`.
   유저 테스트용 등록 키 `b2c-user-test`(id 48, `geo,b2c_write`)를 발급했다.
 - 아파트 매매 API는 2026-11-04 이용 신청이 승인된 개발계정 키로 운영에서 동작한다.
