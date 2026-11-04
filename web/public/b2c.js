@@ -204,17 +204,14 @@ function renderDetail(d) {
   html += `</div>`;
 
   html += `<div class="sec"><h3>지금 남은 매물 <small>전부 보여드립니다</small></h3><div id="listings"></div></div>`;
-  if (d.recently_sold && d.recently_sold.length) {
-    html += `<div class="sec"><h3>최근 7일 사이 팔린 매물</h3><table class="mini">${d.recently_sold
-      .map((l) => `<tr><td>${esc(l.type_name || "")}</td><td>${l.floor ? l.floor + "층" : ""}</td><td class="r">${formatManwon(l.asking_manwon)}</td></tr>`)
-      .join("")}</table></div>`;
-  }
+  html += `<div class="sec" id="recentlySold"></div>`;
   html += `</div>`;
   panel.innerHTML = html;
   panel.querySelector(".back").addEventListener("click", backToList);
 
   renderFloorPlans(d.floor_plans);
   renderListings(c.name, d.listings);
+  renderRecentlySold(d.recently_sold || []);
   drawInfra(c, d.infra);
 }
 
@@ -263,7 +260,7 @@ function renderFloorPlans(fp, tries = 0) {
   showType(0);
 }
 
-let listingRefreshTimer;
+let listingLiveView;
 let listingViewVersion = 0;
 
 function listingRows(items) {
@@ -277,8 +274,7 @@ function listingRows(items) {
 }
 
 function naverSyncNotice(statuses) {
-  if (statuses === undefined) return "네이버 매물 연결 상태를 확인하고 있습니다.";
-  if (!statuses.length) return "이 단지의 네이버 매물 수집은 아직 연결되지 않았습니다. 확인된 직접 등록 매물만 표시합니다.";
+  if (!statuses?.length) return "중개사·집주인이 직접 등록한 실제 매물입니다. 전체 시장의 매물 수와는 다를 수 있습니다.";
   const latest = statuses.map((s) => s.last_success_at).sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1);
   const when = new Date(latest).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
   if (statuses.some((s) => !s.fresh)) return `네이버 갱신이 지연되고 있습니다. 마지막 정상 수집: ${when}. 현재 실시간 정보로 볼 수 없습니다.`;
@@ -286,7 +282,6 @@ function naverSyncNotice(statuses) {
 }
 
 function renderListings(name, page, statuses, changes = []) {
-  clearTimeout(listingRefreshTimer);
   const version = ++listingViewVersion;
   const box = document.getElementById("listings");
   if (!box) return;
@@ -295,10 +290,11 @@ function renderListings(name, page, statuses, changes = []) {
   const counts = { added: 0, gone: 0, price_changed: 0 };
   changes.forEach((c) => { if (Object.hasOwn(counts, c.kind)) counts[c.kind]++; });
   box.innerHTML =
+    `<p class="muted live-status" role="status"></p>` +
     `<p class="muted naver-status">${esc(naverSyncNotice(statuses))}</p>` +
     (changes.length ? `<p class="muted">최근 변동(최대 100건): 신규 ${counts.added} · 사라짐 ${counts.gone} · 호가 변경 ${counts.price_changed}. 목록에서 사라진 매물은 거래 완료가 확인된 것은 아닙니다.</p>` : "") +
     `<p class="muted" style="margin:0 0 6px">확인된 실제 매물 ${total}건</p>` +
-    (total ? `<table class="mini" id="listingTable">${listingRows(page.listings)}</table>` : `<p class="muted">표시할 실제 매물 정보가 없습니다. 수집 연결 상태를 확인해 주세요.</p>`);
+    (total ? `<table class="mini" id="listingTable">${listingRows(page.listings)}</table>` : `<p class="muted">아직 등록된 판매 중 매물이 없습니다.</p>`);
   let next = page?.next_offset;
   const addMore = () => {
     if (next == null) return;
@@ -309,6 +305,7 @@ function renderListings(name, page, statuses, changes = []) {
       btn.disabled = true;
       try {
         const d = await api("/b2c/listings", { complex: name, limit: 50, offset: next });
+        if (version !== listingViewVersion || !box.isConnected) return;
         document.getElementById("listingTable").insertAdjacentHTML("beforeend", listingRows(d.remaining.listings));
         next = d.remaining.next_offset;
         btn.remove();
@@ -321,19 +318,22 @@ function renderListings(name, page, statuses, changes = []) {
     box.appendChild(btn);
   };
   addMore();
-  const refresh = async () => {
-    if (version !== listingViewVersion || !box.isConnected || box.offsetParent === null) return;
-    try {
-      const data = await api("/b2c/listings", { complex: name, limit: 50, offset: 0 });
-      if (version === listingViewVersion && box.isConnected) renderListings(name, data.remaining, data.naver_sync || [], data.naver_changes || []);
-    } catch (e) {
-      if (version !== listingViewVersion || !box.isConnected) return;
-      box.querySelector(".naver-status").textContent = "갱신 상태를 확인하지 못했습니다: " + errText(e);
-      listingRefreshTimer = setTimeout(refresh, 60000);
-    }
-  };
-  if (statuses === undefined) refresh();
-  else listingRefreshTimer = setTimeout(refresh, 60000);
+  if (!listingLiveView || listingLiveView.box !== box || listingLiveView.name !== name || listingLiveView.closed) {
+    listingLiveView?.stop();
+    listingLiveView = new ListingLiveView(name, box, (data) => {
+      renderListings(name, data.remaining, data.naver_sync || [], data.naver_changes || []);
+      renderRecentlySold(data.recently_sold || []);
+    });
+  }
+  listingLiveView.showStatus();
+  if (statuses === undefined) listingLiveView.refresh();
+}
+
+function renderRecentlySold(listings) {
+  const box = document.getElementById("recentlySold");
+  if (!box) return;
+  const real = listings.filter((l) => l.source !== "sample");
+  box.innerHTML = real.length ? `<h3>최근 7일 사이 팔린 등록 매물</h3><table class="mini">${listingRows(real)}</table>` : "";
 }
 
 function drawInfra(c, lines) {
