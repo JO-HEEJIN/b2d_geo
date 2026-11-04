@@ -30,11 +30,12 @@ import (
 	"github.com/JO-HEEJIN/b2d_geo/internal/etl/transit"
 	"github.com/JO-HEEJIN/b2d_geo/internal/store"
 	"github.com/JO-HEEJIN/b2d_geo/migrations"
+	"github.com/JO-HEEJIN/b2d_geo/src/b2c"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|b2c-listings|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -121,6 +122,11 @@ func main() {
 	case "transit-bus":
 		if err := runTransitBus(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "transit-bus failed:", err)
+			os.Exit(1)
+		}
+	case "b2c-listings":
+		if err := runB2CListings(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "b2c-listings failed:", err)
 			os.Exit(1)
 		}
 	case "juso":
@@ -223,6 +229,39 @@ func runTransitBus(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("transit-bus load: inserted=%d skipped=%d source_version=%s\n", inserted, skipped, *version)
+	return nil
+}
+
+// b2cListingsExecStart는 서버 systemd 서비스가 부르는 명령이다. compose의 b2c-listings
+// 서비스(profile oneshot)를 한 번 돌리고 끝난다.
+const b2cListingsExecStart = "/usr/bin/docker compose --project-directory /home/ubuntu/b2d_geo/deploy run --rm --no-deps b2c-listings"
+
+// runB2CListings는 B2C 남은 매물을 한 번 갱신한다(systemd 타이머가 매분 부른다).
+// --print-units면 갱신 대신 서버에 둘 systemd 서비스·타이머 파일 내용을 출력한다.
+func runB2CListings(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("b2c-listings", flag.ContinueOnError)
+	state := fs.String("state", "/state/listings.json", "실행 사이 상태를 잇는 JSON 파일")
+	printUnits := fs.Bool("print-units", false, "systemd 서비스·타이머 파일 내용만 출력")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *printUnits {
+		units := b2c.NewRemainingListings(nil).SystemdUnits(b2cListingsExecStart)
+		for _, name := range []string{"b2c-listings.service", "b2c-listings.timer"} {
+			fmt.Printf("# /etc/systemd/system/%s\n%s\n", name, units[name])
+		}
+		return nil
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	change, err := b2c.NewRemainingListings(b2c.NewListingStore(pool)).RefreshOnce(ctx, *state)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("b2c-listings: added=%d gone=%d\n", len(change.Added), len(change.Gone))
 	return nil
 }
 
