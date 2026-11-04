@@ -43,3 +43,7 @@
   허용한다([ADR 0002](docs/adr/0002-b2c-listing-source-no-scraping.md)).
 - 남은 매물 갱신은 서버 systemd 타이머(매분, `Persistent=true`)가 compose `b2c-listings`(profile oneshot)를
   한 번씩 돌린다. 상태 파일은 호스트 `/var/lib/b2c-listings`. 설치 절차는 deploy/OPS.md 6-4.
+- 운영 반영(2026-11-04): app 이미지 `sha-f7f4569`, 마이그레이션 014~016 적용, 버스정류장 213,985건(2026-10-20판)
+  적재, `b2c-listings.timer` 가동. ned-sync는 `sha-d41aab8` 그대로. 서버 이전 override는
+  `docker-compose.override.yml.pre-b2c-20261104`.
+- 실거래(`/v1/b2c/trades`)는 운영 MOLIT 키가 아파트 매매 API에 이용 신청되지 않아 502를 준다(토지 실거래만 등록).
