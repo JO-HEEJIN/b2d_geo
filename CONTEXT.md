@@ -36,14 +36,18 @@
   `server.go`는 경로만 붙인다. 읽기는 `geo` scope, 등록(`/v1/b2c/write/*`)은 `b2c_write` scope가 필요하다.
   남은 매물 목록은 `limit`(1-200, 기본 50)·`offset` 페이지로 나눠 주고 `next_offset`으로 끝까지 넘긴다.
 - 실거래: 국토부 아파트 매매 API(`RTMSDataSvcAptTrade`, env `MOLIT_API_KEY`)를 월별·페이지별로 부르고 6시간 캐시한다.
-- 인프라: 버스정류장은 `transit_stops`(국토부 전국 버스정류장 CSV, `b2d-etl transit-bus`)에서,
-  편의점(G20405)·병원(Q10101·Q10102·Q10201)은 `places`에서 찾는다. 지하철역은 아직 적재 전이다.
+- 인프라: 버스정류장(국토부 전국 버스정류장 CSV, `b2d-etl transit-bus`)과 지하철역(전국도시철도역사정보
+  표준데이터 XLSX, `b2d-etl transit-subway`, stop_id = 역번호-노선번호)은 `transit_stops`에서, 편의점(G20405)·
+  병원(Q10101·Q10102·Q10201)은 `places`에서 찾는다. 동탄역(SRT·GTX-A)은 도시철도 자료에 없다.
   도보시간 = 직선거리 x 1.3 / 분당 80m.
-- 평면 타입은 `b2c_floor_plans`, 매물은 `b2c_listings`(직접 등록만)에 있다. 매물 원천은 계약 피드와 직접 등록만
+- 평면 타입은 `b2c_floor_plans`, 매물은 `b2c_listings`(직접 등록만)에 있다. 평면 후보는 건축물대장 전유부
+  (`BldRgstHubService`, 페이지당 100행)에서 (전용면적, 호 라인)으로 묶어 자동 생성하고(`b2d-etl b2c-floor-plans`,
+  `POST /v1/b2c/write/floor-plans/from-register`), 사람이 등록한 같은 이름의 타입은 덮어쓰지 않는다. 매물 원천은 계약 피드와 직접 등록만
   허용한다([ADR 0002](docs/adr/0002-b2c-listing-source-no-scraping.md)).
 - 남은 매물 갱신은 서버 systemd 타이머(매분, `Persistent=true`)가 compose `b2c-listings`(profile oneshot)를
   한 번씩 돌린다. 상태 파일은 호스트 `/var/lib/b2c-listings`. 설치 절차는 deploy/OPS.md 6-4.
 - 운영 반영(2026-11-04): app 이미지 `sha-f7f4569`, 마이그레이션 014~016 적용, 버스정류장 213,985건(2026-10-20판)
   적재, `b2c-listings.timer` 가동. ned-sync는 `sha-d41aab8` 그대로. 서버 이전 override는
   `docker-compose.override.yml.pre-b2c-20261104`.
-- 실거래(`/v1/b2c/trades`)는 운영 MOLIT 키가 아파트 매매 API에 이용 신청되지 않아 502를 준다(토지 실거래만 등록).
+- 아파트 매매 API는 2026-11-04 이용 신청이 승인됐다(개발계정). 지하철역 적재와 평면 후보 자동 생성(main ed839f0)은
+  아직 운영 서버에 반영하지 않았다(운영 app은 sha-f7f4569).
