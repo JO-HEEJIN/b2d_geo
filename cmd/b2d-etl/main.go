@@ -35,7 +35,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|b2c-listings|apikey|download|load|index>")
+		fmt.Fprintln(os.Stderr, "usage: b2d-etl <migrate|juso|sbiz|jijeok|land-sales|price-index|standard-lots|land-use|ned-sync|rone-sync|transit-bus|transit-subway|b2c-listings|apikey|download|load|index>")
 		os.Exit(2)
 	}
 
@@ -122,6 +122,11 @@ func main() {
 	case "transit-bus":
 		if err := runTransitBus(context.Background(), os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "transit-bus failed:", err)
+			os.Exit(1)
+		}
+	case "transit-subway":
+		if err := runTransitSubway(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "transit-subway failed:", err)
 			os.Exit(1)
 		}
 	case "b2c-listings":
@@ -229,6 +234,38 @@ func runTransitBus(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("transit-bus load: inserted=%d skipped=%d source_version=%s\n", inserted, skipped, *version)
+	return nil
+}
+
+// runTransitSubway는 전국도시철도역사정보표준데이터 XLSX를 transit_stops에 적재한다.
+func runTransitSubway(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("transit-subway", flag.ContinueOnError)
+	version := fs.String("version", "", "자료 기준일 YYYY-MM-DD (파일명의 날짜, 예: 2026-06-30)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || *version == "" {
+		return fmt.Errorf("usage: b2d-etl transit-subway --version YYYY-MM-DD <xlsx>")
+	}
+	f, err := os.Open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	pool, err := pgxpool.New(ctx, dbDSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	inserted, skipped, err := transit.LoadSubway(ctx, pool, f, st.Size(), *version)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("transit-subway load: inserted=%d skipped=%d source_version=%s\n", inserted, skipped, *version)
 	return nil
 }
 
