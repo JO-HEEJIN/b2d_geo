@@ -23,16 +23,18 @@
 - 결제 시스템 연동 전까지 Standard 신청은 이메일 접수 후 수동 발급한다.
 - 포트원 경유 PG 방향은 [ADR 0001](docs/adr/0001-payment-provider-portone.md)에 기록한다.
 
-## B2C 모듈 (b2c 브랜치)
+## B2C 모듈
 
 - 일반 사용자용 기능은 `src/b2c/` 한 패키지에 있다. 모듈 번호는 `Keywords` 사전의 키이고
   파일 이름 앞 숫자와 같다: 1 district, 2 floor_plan, 3 recent_trades, 4 infra_map,
   5 remaining_listings. 모듈 하나는 파일 하나, 기능은 구조체 메서드다. `http.go`는 API 연결만 한다.
 - 공통 원칙: 후보를 추려 줄이지 않고 전부 보여준다. 판단 문구는 사람이 느끼는 감정
   (조급함, 남들도 샀다는 안도감, 계약 뒤 수리비)을 따른다.
-- 구역은 송도동·1동탄·2동탄·하남·용인 수지·수원·잠실 일곱 곳뿐이다. 1/2동탄은 법정동으로 가른다.
+- 구역은 송도동·1동탄·2동탄·하남·용인 수지·수원·잠실 일곱 곳뿐이다. 1/2동탄은 법정동으로 가른다
+  (화성시 동탄구 41597, 2026-03-01 신설 여울동은 2동탄).
 - API는 `/v1/b2c/*`다. 판단 문구가 있어 핸들러는 `internal/api`(사실 반환 경계)가 아닌 `src/b2c`에 있고,
   `server.go`는 경로만 붙인다. 읽기는 `geo` scope, 등록(`/v1/b2c/write/*`)은 `b2c_write` scope가 필요하다.
+  남은 매물 목록은 `limit`(1-200, 기본 50)·`offset` 페이지로 나눠 주고 `next_offset`으로 끝까지 넘긴다.
 - 실거래: 국토부 아파트 매매 API(`RTMSDataSvcAptTrade`, env `MOLIT_API_KEY`)를 월별·페이지별로 부르고 6시간 캐시한다.
 - 인프라: 버스정류장은 `transit_stops`(국토부 전국 버스정류장 CSV, `b2d-etl transit-bus`)에서,
   편의점(G20405)·병원(Q10101·Q10102·Q10201)은 `places`에서 찾는다. 지하철역은 아직 적재 전이다.

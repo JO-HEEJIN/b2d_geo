@@ -99,7 +99,7 @@
 | GET | `/v1/b2c/floor-plans?complex_id=` | 2 |
 | GET | `/v1/b2c/trades?lawd_cd=&complex=&build_year=` | 3 |
 | GET | `/v1/b2c/infra?lon=&lat=` | 4 |
-| GET | `/v1/b2c/listings?complex=` | 5 |
+| GET | `/v1/b2c/listings?complex=&limit=&offset=` | 5 (페이지: limit 1-200, 기본 50, `next_offset`) |
 | POST | `/v1/b2c/write/floor-plans` | 2 등록 |
 | POST | `/v1/b2c/write/listings`, `/v1/b2c/write/listings/{id}/close` | 5 등록·팔림 |
 
@@ -107,8 +107,8 @@
 
 | 모듈 | 원천 | 상태 |
 |---|---|---|
-| 2 평면 | `b2c_floor_plans` (직접 등록) | 사용 중. 건축물대장 전유부 자동 후보는 키 확인 후 |
-| 3 실거래 | 국토부 아파트 매매 실거래 API | 코드 완료. 실키 1회 확인 남음 |
+| 2 평면 | `b2c_floor_plans` (직접 등록) | 사용 중. 건축물대장 전유부 API는 키로 호출 확인, 자동 후보는 다음 작업 |
+| 3 실거래 | 국토부 아파트 매매 실거래 API | 코드 완료. data.go.kr에서 이 API 이용 신청 필요 (키는 토지 실거래만 등록됨) |
 | 4 버스 | 국토부 전국 버스정류장 위치정보 CSV | 적재 명령 `b2d-etl transit-bus` |
 | 4 지하철 | 국가철도공단 도시광역철도 역사정보 XLSX | 파일 수동 다운로드 후 로더 작성 |
 | 4 편의점·병원 | 소상공인 상가정보 (`places`) | 사용 중 |

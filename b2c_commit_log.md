@@ -411,3 +411,59 @@ Writes need the **`b2c_write` scope** (new):
 - `go test ./...` with the PostGIS tests enabled: all pass.
 
 
+## 12. `feat/b2c-dongtan-yeoul` ([#27](https://github.com/JO-HEEJIN/b2d_geo/pull/27))
+
+### 커밋
+
+- `ec73755` fix(b2c): classify the new Yeoul-dong as Dongtan 2
+
+  Hwaseong created Dongtan-gu (41597) on 2026-02-01 and the legal dong
+  Yeoul-dong (4159711500) on 2026-03-01, per the MOIS legal dong code API.
+  Building register addresses already use it, so it now maps to Dongtan 2.
+  Osan-dong stays in the list so older addresses still classify.
+
+### Description
+
+Module 1 (`district`) fix
+
+#### Why
+The building register API returned "경기도 화성시 동탄구 **여울동** 964번지", which no zone matched. The MOIS legal dong code API (StanReginCd, `flag=Y`) shows:
+- Hwaseong Dongtan-gu `41597` since 2026-02-01: 능동, 반송동, 석우동, 청계동, 영천동, 중동, 신동, 목동, 산척동, 장지동, 송동, 방교동, 금곡동.
+- **여울동 `4159711500` since 2026-03-01.**
+- 오산동 is no longer in the current list.
+
+#### Change
+- Add 여울동 to Dongtan 2.
+- Keep 오산동 so older addresses still classify.
+- Tests: "화성시 동탄구 반송동" → dongtan1, "화성시 동탄구 여울동" → dongtan2.
+
+
+## 13. `feat/b2c-listings-pagination` ([#28](https://github.com/JO-HEEJIN/b2d_geo/pull/28))
+
+### 커밋
+
+- `f1170c8` feat(b2c): paginate remaining listings
+
+  GET /v1/b2c/listings now takes limit (1-200, default 50) and offset and
+  returns total and next_offset, with a fixed complex, price, id order so
+  offsets stay stable. Every listing is still reachable by paging, and
+  recent sales are capped at the 50 most recent.
+
+### Description
+
+Module 5 (`remaining_listings`) + API
+
+#### Change
+- `ListingStore.Page(complex, limit, offset)`: does the count and the slice in the database. Order is fixed (complex, price, id), so offsets stay stable.
+- `GET /v1/b2c/listings?complex=&limit=&offset=`:
+  - `remaining` becomes `{listings, total, limit, offset, next_offset}`. `next_offset` is null on the last page.
+  - `limit` must be 1-200 (default 50). `offset` must be ≥ 0. Anything else returns 400.
+- `recently_sold`: the 50 most recent sales from the last 7 days.
+- The never-prune principle still holds: every listing can be reached by following `next_offset`. Only the amount sent at once is limited.
+
+#### Verification
+- PostGIS test: 5 listings at 2 per page come back in 3 pages, in price order, with no gaps. limit 1000 is clamped to 200 and a negative offset to 0. An empty result returns `[]` with `next_offset = null`.
+- Local server: 3 listings at `limit=2` → `next_offset=2` → second page has 1 listing and `next_offset=null`. `limit=500` returns 400.
+- `pageParams` unit table.
+
+
