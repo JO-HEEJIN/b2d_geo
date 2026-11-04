@@ -742,3 +742,40 @@ Until now B2C existed only as an API (`/v1/b2c/*`), so there was no page a non-d
 - `go vet ./...`, `go build ./...`, `node --check web/public/b2c.js`, web embed tests.
 
 
+## 21. `feat/b2c-register-page` ([#44](https://github.com/JO-HEEJIN/b2d_geo/pull/44))
+
+### 커밋
+
+- `264a731` feat(b2c): add a listing registration page for agents and owners
+
+  Adds /b2c-register.html, linked from the browsing page. With a b2c_write
+  key kept only in the browser, an agent or owner picks a zone and a
+  complex by its trade name, enters type, floor and asking price, uploads
+  a CSV for many listings at once, and marks their own listings sold or
+  withdrawn. A new endpoint returns only the caller's own listings.
+
+### Description
+
+Refs #18
+
+#### Page: `/b2c-register.html` (linked as "매물 등록" from `/b2c.html`, `noindex`)
+1. **Registration key:** the user enters a `b2c_write` key. It is stored only in this browser's localStorage and checked by loading "내 매물". 401 shows "키가 올바르지 않습니다" and 403 shows "등록 권한 없음".
+2. **Register one listing:**
+   - Pick a zone, then a complex with a name filter. Complex names are the exact names from the trade data, so the listing shows up under the right complex on the browsing page.
+   - Enter type, floor and asking price in 10,000 won. The price is previewed as e.g. "9억 8,000만원".
+   - The complex's map location is saved with the listing.
+3. **CSV upload:** the file bytes are sent as they are, so Excel's default CP949 also works. If any row is bad, nothing is inserted and each bad line is shown.
+4. **My listings:** active listings first, then sold or withdrawn ones from the last 30 days, each with 팔림 (sold) / 내림 (withdrawn) buttons.
+- Lookups (zones, complexes) use the public demo key. Writes use the entered key. Layout works on a phone (single column).
+
+#### Backend
+- `ListingStore.Mine(registeredBy)`: only the caller's listings, active first, closed ones from the last 30 days, max 1,000.
+- `GET /v1/b2c/write/listings/mine` (`b2c_write`).
+- `Listing.status` (omitempty) is filled only in this list.
+
+#### Verification
+- `go vet ./...`, `go build ./...`, `node --check web/public/b2c-register.js`.
+- Web embed tests pass for the new page: brand assets and the shared stylesheet key.
+- PostGIS test added (local Docker is off): another registrant's listing is excluded, and ordering is active first, then sold.
+
+
