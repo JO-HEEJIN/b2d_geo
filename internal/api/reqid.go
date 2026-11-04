@@ -68,6 +68,9 @@ type statusRecorder struct {
 	wrote  bool
 }
 
+// Unwrap lets ResponseController flush streaming responses through this wrapper.
+func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *statusRecorder) WriteHeader(code int) {
 	w.status = code
 	w.wrote = true

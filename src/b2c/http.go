@@ -32,6 +32,7 @@ type Handler struct {
 	autoPlans *dailyCap
 	building  inflight
 	listings  *ListingStore
+	live      *listingLive
 	mux       *http.ServeMux
 }
 
@@ -52,6 +53,7 @@ func NewHandler(pool *pgxpool.Pool, molitKey string) *Handler {
 		locator:   NewComplexLocator(pool),
 		autoPlans: &dailyCap{max: autoFloorPlansPerDay},
 		listings:  NewListingStore(pool),
+		live:      &listingLive{pool: pool},
 		mux:       http.NewServeMux(),
 	}
 	h.mux.HandleFunc("GET /v1/b2c/keywords", h.keywords)
@@ -63,12 +65,14 @@ func NewHandler(pool *pgxpool.Pool, molitKey string) *Handler {
 	h.mux.HandleFunc("GET /v1/b2c/complex", h.complexDetail)
 	h.mux.HandleFunc("GET /v1/b2c/floor-plans", h.floorPlans)
 	h.mux.HandleFunc("GET /v1/b2c/listings", h.remainingListings)
+	h.mux.HandleFunc("GET /v1/b2c/listings/stream", h.listingStream)
 	h.mux.HandleFunc("POST /v1/b2c/write/floor-plans", h.saveFloorPlan)
 	h.mux.HandleFunc("POST /v1/b2c/write/floor-plans/from-register", h.floorPlansFromRegister)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings", h.registerListing)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings/import", h.importListings)
 	h.mux.HandleFunc("GET /v1/b2c/write/listings/mine", h.myListings)
 	h.mux.HandleFunc("POST /v1/b2c/write/listings/{id}/close", h.closeListing)
+	h.mux.HandleFunc("PATCH /v1/b2c/write/listings/{id}/price", h.updateListingPrice)
 	return h
 }
 
