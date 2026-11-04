@@ -166,27 +166,87 @@ $RUN rone-sync                                       # 백필: 2005-01부터 이
 - 자동 실행: compose 서비스 `rone-sync`(데몬, 매일 03:17 KST, ned-sync와 같은 시각). 운영 Lightsail은 override에 같은 서비스를 넣어 띄운다.
 - 로그: `docker compose logs --tail 20 rone-sync`.
 
-## 6-4. B2C 남은 매물 갱신 (b2c-listings systemd 타이머, 2026-11-04 가동)
+## 6-4. B2C 실제 매물 갱신: 네이티브 ETL과 독립된 원천
 
-cron이 아니라 systemd 타이머가 매분 `docker compose run --rm --no-deps b2c-listings`를 한 번 돌린다.
-`Persistent=true`라서 서버가 꺼져 있던 사이 놓친 실행은 부팅 직후 바로 따라잡는다. 매물 원천은
-`b2c_listings`(직접 등록)뿐이다(ADR 0002). 서비스 정의는 서버 `docker-compose.override.yml`의
-`b2c-listings`(profile oneshot, 이미지 태그를 app과 같이 올린다). 서버에는 `ned`가 없으므로 유닛 파일은
-이미지가 출력한 내용을 그대로 설치한다.
+`b2d-etl b2c-listings`의 기본 원천은 직접 등록 DB다. `B2C_LISTING_SOURCE=naver`를 명시한
+별도 실행만 네이버를 조회한다. 두 원천은 서로 다른 상태 파일을 사용하며 다른 원천의 상태 파일을
+읽으려 하면 실패한다. 직접 등록·CSV 등록·판매 처리를 네이버 오류 때문에 중지하지 않는다.
 
-```sh
-cd ~/b2d_geo/deploy
-sudo install -d -o 65532 -g 65532 /var/lib/b2c-listings      # distroless nonroot가 상태 파일을 쓴다
-docker compose run --rm --no-deps --entrypoint /b2d-etl app b2c-listings --print-units > /tmp/units.txt
-awk '/^# \/etc\/systemd\/system\//{f="/tmp/" substr($2,21); next} {print > f}' /tmp/units.txt
-sudo install -m 644 /tmp/b2c-listings.service /tmp/b2c-listings.timer /etc/systemd/system/
-sudo systemd-analyze verify /etc/systemd/system/b2c-listings.{service,timer}
-sudo systemctl daemon-reload && sudo systemctl enable --now b2c-listings.timer
-systemctl list-timers b2c-listings.timer                      # 다음 실행 시각
-journalctl -u b2c-listings -n 20                              # "b2c-listings: added=N gone=M"
+공개 매물 목록은 실제 직접 등록 및 정상 수집·저장된 네이버 매물만 반환한다. `sample:` 데이터는 DB에
+보존해도 공개 목록과 직접 등록 추적에서 제외한다. 네이버 조회가 실패하면 이전 스냅샷과 DB를 보존하며,
+빈 응답·알 수 없는 JSON 형식을 정상 빈 목록으로 취급하지 않는다. 매물 소멸은 `withdrawn`으로 기록하고
+확정 거래인 `sold`로 바꾸지 않는다. 매물 호가는 국토부 실거래가와 구분한다.
+
+먼저 마이그레이션 017을 적용한다. 완결된 네이버 스냅샷만 기존 `b2c_listings`에 원천과 외부 키를
+구분해 저장하며, 신규·소멸·호가 변경은 `b2c_naver_changes`, 마지막 성공은 `b2c_naver_sync`에 남는다.
+`GET /v1/b2c/listings`는 `naver_sync`와 `naver_changes`도 반환한다. 화면은 1분마다 조회하고,
+최초 수집 전과 마지막 성공이 2분 이상 지난 경우 실시간 정보로 표시하지 않는다.
+
+배포는 검증한 커밋의 Linux amd64 정적 바이너리를 `/opt/b2d_geo/releases/<COMMIT>/`에 설치한다.
+직접 등록 타이머는 `b2c-listings.timer`, 네이버는 독립된 `b2c-naver-listings.timer`를 사용한다.
+배포 전에 unit·drop-in·상태 파일을 root 전용 경로에 소유권과 모드를 보존해 백업한다.
+기존 서버에 없는 UID/GID 65532는 로그인 불가 전용 계정으로 등록해야 한다.
+
+직접 등록 서비스의 drop-in 예:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/opt/b2d_geo/releases/<COMMIT>/b2d-etl b2c-listings --state /var/lib/b2c-listings/listings.json
+EnvironmentFile=/etc/b2d_geo/database.env
+Environment="B2C_LISTING_SOURCE=direct"
+User=65532
+Group=65532
+TimeoutStartSec=180
 ```
 
-이미지를 올릴 때는 override의 app·b2c-listings 태그를 함께 바꾼다. 타이머 중지: `sudo systemctl disable --now b2c-listings.timer`.
+네이버 서비스는 같은 바이너리와 전용 상태 파일을 사용한다:
+
+```ini
+[Service]
+Type=oneshot
+ExecStart=/opt/b2d_geo/releases/<COMMIT>/b2d-etl b2c-listings --state /var/lib/b2c-listings/naver-115950-A1.json
+EnvironmentFile=/etc/b2d_geo/database.env
+Environment="B2C_LISTING_SOURCE=naver"
+Environment="B2C_COMPLEX_NO=115950"
+Environment="B2C_HTTP_TIMEOUT=40s"
+Environment="B2C_HTTP_RETRIES=3"
+Environment="B2C_MOBILE_FALLBACK=true"
+User=65532
+Group=65532
+TimeoutStartSec=180
+```
+
+`database.env`는 기존 운영 설정에서 DB 연결만 추출한 root 소유 0600 파일이다. 네이티브 프로세스에서
+접근할 수 있는 DB 주소를 사용한다. 비밀번호·API 키를 로그나 커밋에 남기지 않는다. `deploy/.env`의
+원본 관리 정책은 7-2절을 따른다. 네이버 실패 시 직접 등록의 환경 파일·타이머를 변경하지 않는다.
+
+HTTP 연결 10초·TLS 10초·헤더 대기 25초·전체 요청 40초로 구분하며, 재시도 기본 3회(0 허용),
+전체 갱신 context는 165초다. 401/403은 즉시 중단하고 원인을 인증 만료나 IP 차단으로 단정하지 않는다.
+429·5xx·연결 오류 재시도는 지수 백오프와 `Retry-After`를 지킨다. 모바일 전환은 한 번만 하며
+페이지 1부터 다시 검증한다. 모바일 `HTTP 200`의 JSON `null`은 수집 성공이 아니다.
+
+```sh
+sudo systemctl daemon-reload
+sudo systemd-analyze verify /etc/systemd/system/b2c-listings.service
+sudo systemctl start b2c-listings.service
+systemctl show b2c-listings.service -p Result -p ExecMainStatus -p ExecStart
+sudo systemctl enable --now b2c-listings.timer
+# 네이버는 실제 원천 수집과 DB 저장 성공을 확인한 뒤에만 활성화한다.
+sudo systemctl start b2c-naver-listings.service
+journalctl -u b2c-naver-listings.service -n 50 --no-pager
+# 정상 수집을 확인한 경우에만:
+sudo systemctl enable --now b2c-naver-listings.timer
+```
+
+`added=0`은 변화 없는 정상 갱신에서도 발생한다. 성공은 전체 스냅샷 검증·DB 반영·서비스 종료 코드와
+마지막 성공 시각으로 판단한다. 네이버 실패 시 타이머는 활성화하지 않고 조회 오류를 해결한다.
+
+현재 확인된 접속 현상(2026-11-05 KST): 서버 IP 국가는 KR, DNS/TCP/TLS는 0.07초 이내였으나
+원래 API·대체 경로·모바일 경로는 응답 헤더 없이 25초 타임아웃이었다. 서버 브라우저도 페이지 로딩이
+45초에 실패했고, 다른 네이티브 TLS 클라이언트는 약 15초 뒤 상대 연결이 끊겼다. 이는 서버에서
+HTTP 401/403/429를 수신했다는 뜻이 아니다. Mac의 일반 HTTP 요청에서는 별도로 429가 관측됐고,
+모바일 경로는 200과 JSON null을 반환했다. SSH 자체가 네이버의 접근 정책을 바꾸지 않는다.
 
 ## 7. "진짜 서비스" 백로그 (M1에서 이어서)
 

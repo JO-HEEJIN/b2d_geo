@@ -111,11 +111,11 @@ func TestListingStoreAgainstPostgres(t *testing.T) {
 	}
 	pool.Exec(ctx, `DELETE FROM b2c_listings WHERE registered_by = 'b2c_test_csv_importer'`)
 
-	// 예시 매물은 Source가 sample로 나오고 PurgeSamples로 지워진다.
+	// 예시 매물은 공개 목록에서 제외되고, PurgeSamples로 정리할 수 있다.
 	if _, err := store.RegisterMany(ctx, []Listing{{ComplexName: "b2c_test_sample", AskingManwon: 70000}}, SampleRegistrantPrefix+"b2c_test"); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := store.Page(ctx, "b2c_test_sample", 0, 0); err != nil || p.Total != 1 || p.Listings[0].Source != SampleListingSourceName {
+	if p, err := store.Page(ctx, "b2c_test_sample", 0, 0); err != nil || p.Total != 0 || len(p.Listings) != 0 {
 		t.Fatalf("sample page = %+v %v", p, err)
 	}
 	if n, err := store.PurgeSamples(ctx, "b2c_test"); err != nil || n != 1 {

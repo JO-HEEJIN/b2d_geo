@@ -4,10 +4,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -454,17 +458,190 @@ func runB2CListings(ctx context.Context, args []string) error {
 		}
 		return nil
 	}
-	pool, err := pgxpool.New(ctx, dbDSN())
-	if err != nil {
+	mode := os.Getenv("B2C_LISTING_SOURCE")
+	if mode == "" {
+		mode = "direct"
+	}
+	var src b2c.ListingSource
+	switch mode {
+	case "direct":
+		pool, err := pgxpool.New(ctx, dbDSN())
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		src = b2c.NewListingStore(pool)
+	case "naver":
+		naver, err := b2cListingSourceFromEnv()
+		if err != nil {
+			return err
+		}
+		if number, err := strconv.ParseUint(naver.ComplexNo, 10, 64); err != nil || number == 0 {
+			return fmt.Errorf("B2C_COMPLEX_NO must be a positive complex number")
+		}
+		stateWasSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "state" {
+				stateWasSet = true
+			}
+		})
+		if !stateWasSet {
+			*state = filepath.Join(filepath.Dir(*state), "naver-"+naver.ComplexNo+"-"+naver.TradeType+".json")
+		}
+		src = naver
+	default:
+		return fmt.Errorf("B2C_LISTING_SOURCE must be direct or naver")
+	}
+	if err := validateB2CListingStateSource(*state, mode); err != nil {
 		return err
 	}
-	defer pool.Close()
-	change, err := b2c.NewRemainingListings(b2c.NewListingStore(pool)).RefreshOnce(ctx, *state)
+	if mode == "naver" {
+		if err := checkNaverCooldown(*state, time.Now()); err != nil {
+			return err
+		}
+	}
+	// systemd's 180-second limit leaves time to return an error and preserve state.
+	ctx, cancel := context.WithTimeout(ctx, 165*time.Second)
+	defer cancel()
+	rl := b2c.NewRemainingListings(src)
+	change, err := rl.RefreshOnce(ctx, *state)
 	if err != nil {
+		var fetchErr *b2c.NaverFetchError
+		if errors.As(err, &fetchErr) {
+			fmt.Fprintf(os.Stderr, "b2c-listings: cause=%s status=%d host=%s page=%d\n",
+				fetchErr.Cause, fetchErr.StatusCode, fetchErr.Host, fetchErr.Page)
+			if mode == "naver" && fetchErr.StatusCode == 429 && fetchErr.RetryAfter > 0 {
+				if saveErr := saveNaverCooldown(*state, time.Now().Add(fetchErr.RetryAfter)); saveErr != nil {
+					return errors.Join(err, fmt.Errorf("persist rate-limit deadline: %w", saveErr))
+				}
+			}
+		}
 		return err
 	}
-	fmt.Printf("b2c-listings: added=%d gone=%d\n", len(change.Added), len(change.Gone))
+	active := len(rl.Remaining(""))
+	added, gone, priceChanged := len(change.Added), len(change.Gone), 0
+	if naver, ok := src.(*b2c.NaverListingSource); ok {
+		pool, err := pgxpool.New(ctx, dbDSN())
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		stats, err := b2c.NewListingStore(pool).SyncNaverSnapshot(ctx, naver.ComplexNo, rl.Remaining(""))
+		if err != nil {
+			return fmt.Errorf("persist Naver snapshot: %w", err)
+		}
+		added, gone, priceChanged = stats.Added, stats.Gone, stats.PriceChanged
+	}
+	fmt.Printf("b2c-listings: added=%d gone=%d active=%d source=%s price_changed=%d\n", added, gone, active, mode, priceChanged)
+	if active == 0 {
+		fmt.Fprintf(os.Stderr, "b2c-listings: warning: source=%s active=0\n", mode)
+	}
 	return nil
+}
+
+func checkNaverCooldown(statePath string, now time.Time) error {
+	raw, err := os.ReadFile(statePath + ".retry-after")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var cooldown struct {
+		Until time.Time `json:"until"`
+	}
+	if err := json.Unmarshal(raw, &cooldown); err != nil || cooldown.Until.IsZero() {
+		return fmt.Errorf("invalid Naver rate-limit deadline; no request sent")
+	}
+	if cooldown.Until.After(now) {
+		return fmt.Errorf("naver rate-limited until %s; no request sent", cooldown.Until.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+func saveNaverCooldown(statePath string, until time.Time) error {
+	raw, err := json.Marshal(struct {
+		Until time.Time `json:"until"`
+	}{until})
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(statePath), ".naver-cooldown-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), statePath+".retry-after")
+}
+
+func validateB2CListingStateSource(path, source string) error {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var state struct {
+		Active []b2c.Listing `json:"active"`
+		Gone   []b2c.Listing `json:"gone"`
+	}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return fmt.Errorf("invalid listing state: %w", err)
+	}
+	for _, group := range [][]b2c.Listing{state.Active, state.Gone} {
+		for _, listing := range group {
+			if (source == "naver") != (listing.Source == "naver") {
+				return fmt.Errorf("state source mismatch: use a separate --state file for %s", source)
+			}
+		}
+	}
+	return nil
+}
+
+func b2cListingSourceFromEnv() (*b2c.NaverListingSource, error) {
+	timeout := 40 * time.Second
+	if raw := os.Getenv("B2C_HTTP_TIMEOUT"); raw != "" {
+		var err error
+		timeout, err = time.ParseDuration(raw)
+		if err != nil || timeout <= 0 || timeout > 165*time.Second {
+			return nil, fmt.Errorf("B2C_HTTP_TIMEOUT must be a positive duration no greater than 165s")
+		}
+	}
+	retries := 3
+	if raw := os.Getenv("B2C_HTTP_RETRIES"); raw != "" {
+		var err error
+		retries, err = strconv.Atoi(raw)
+		if err != nil || retries < 0 || retries > 10 {
+			return nil, fmt.Errorf("B2C_HTTP_RETRIES must be an integer from 0 to 10")
+		}
+	}
+	mobileFallback := true
+	if raw := os.Getenv("B2C_MOBILE_FALLBACK"); raw != "" {
+		var err error
+		mobileFallback, err = strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("B2C_MOBILE_FALLBACK must be a boolean")
+		}
+	}
+	return &b2c.NaverListingSource{
+		ComplexNo:            os.Getenv("B2C_COMPLEX_NO"),
+		TradeType:            "A1",
+		PageSize:             100,
+		HTTPTimeout:          timeout,
+		MaxRetries:           retries,
+		EnableMobileFallback: mobileFallback,
+		Logf: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "b2c-listings: "+format+"\n", args...)
+		},
+	}, nil
 }
 
 func runSbiz(ctx context.Context, args []string) error {
