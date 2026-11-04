@@ -554,7 +554,7 @@ func checkNaverCooldown(statePath string, now time.Time) error {
 		return fmt.Errorf("invalid Naver rate-limit deadline; no request sent")
 	}
 	if cooldown.Until.After(now) {
-		return fmt.Errorf("Naver rate-limited until %s; no request sent", cooldown.Until.UTC().Format(time.RFC3339))
+		return fmt.Errorf("naver rate-limited until %s; no request sent", cooldown.Until.UTC().Format(time.RFC3339))
 	}
 	return nil
 }
