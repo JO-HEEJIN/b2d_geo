@@ -48,8 +48,8 @@
   한 번에 올린다(`b2d-etl b2c-listings-import`, `POST /v1/b2c/write/listings/import`, UTF-8·CP949, 한글 헤더 허용).
 - 남은 매물 갱신은 서버 systemd 타이머(매분, `Persistent=true`)가 compose `b2c-listings`(profile oneshot)를
   한 번씩 돌린다. 상태 파일은 호스트 `/var/lib/b2c-listings`. 설치 절차는 deploy/OPS.md 6-4.
-- 운영 반영(2026-11-04): app 이미지 `sha-f7f4569`, 마이그레이션 014~016 적용, 버스정류장 213,985건(2026-10-20판)
-  적재, `b2c-listings.timer` 가동. ned-sync는 `sha-d41aab8` 그대로. 서버 이전 override는
-  `docker-compose.override.yml.pre-b2c-20261104`.
-- 아파트 매매 API는 2026-11-04 이용 신청이 승인됐다(개발계정). 지하철역 적재, 평면 후보 자동 생성, 신고 지연 안내,
-  CSV 일괄 등록은 main에 있으나 아직 운영 서버에 반영하지 않았다(운영 app은 sha-f7f4569).
+- 운영 반영: app·b2c-listings 이미지 `sha-c7ec7e7`(2026-11-05), 마이그레이션 014~016, 버스정류장 213,985건
+  (2026-10-20판), 지하철역 1,094건(2026-06-30판), 동탄역 신미주 평면 후보 6개, `b2c-listings.timer` 가동.
+  ned-sync는 `sha-d41aab8` 그대로. 직전 override는 `docker-compose.override.yml.pre-c7ec7e7`.
+  유저 테스트용 등록 키 `b2c-user-test`(id 48, `geo,b2c_write`)를 발급했다.
+- 아파트 매매 API는 2026-11-04 이용 신청이 승인된 개발계정 키로 운영에서 동작한다.
