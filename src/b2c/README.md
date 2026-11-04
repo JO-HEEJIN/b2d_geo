@@ -94,6 +94,9 @@
 단지가 전부 나오고, 단지를 누르면 판단·실거래·도보시간·구조·남은 매물을 한 화면에서 본다. `#dongtan2`처럼 주소 뒤에
 구역 키를 붙이면 바로 그 구역이 열린다.
 
+중개사·집주인은 `https://api.birth2death.com/b2c-register.html`에서 `b2c_write` 키로 매물을 한 건씩 또는 CSV로 등록하고,
+내 매물을 팔림·내림으로 바꾼다.
+
 ## API
 
 읽기는 `geo` scope, 등록은 `b2c_write` scope 키가 필요하다 (`b2d-etl apikey create --scopes geo,b2c_write`).
@@ -109,6 +112,7 @@
 | GET | `/v1/b2c/listings?complex=&limit=&offset=` | 5 (페이지: limit 1-200, 기본 50, `next_offset`) |
 | POST | `/v1/b2c/write/floor-plans`, `/v1/b2c/write/floor-plans/from-register` | 2 등록·건축물대장 후보 |
 | POST | `/v1/b2c/write/listings`, `/v1/b2c/write/listings/import` (CSV), `/v1/b2c/write/listings/{id}/close` | 5 등록·일괄 등록·팔림 |
+| GET | `/v1/b2c/write/listings/mine` | 5 내 매물 (b2c_write) |
 
 ## 데이터 원천
 
