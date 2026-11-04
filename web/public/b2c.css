@@ -42,6 +42,7 @@
 .lvl.hot { background: var(--gold-soft); color: var(--gold); }
 .lvl.active { background: var(--accent-soft); color: var(--accent); }
 .lvl.slow, .lvl.dormant { background: var(--surface-3); color: var(--ink-2); }
+.lvl.sample { margin-left: 0; background: var(--surface-3); color: var(--warn); border: 1px dashed var(--warn); }
 
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
 .dot.hot { background: var(--gold); }
@@ -97,6 +98,7 @@ table.mini td { padding: 6px 0; border-bottom: 1px solid var(--border); }
 table.mini td.r { text-align: right; }
 table.mini tr.cancel td { color: var(--ink-3); text-decoration: line-through; }
 .more { margin-top: 10px; width: 100%; }
+.sample-note { margin: 0 0 8px; padding: 8px 10px; font-size: 12px; line-height: 1.5; color: var(--warn); background: var(--surface-2); border: 1px dashed var(--warn); border-radius: var(--radius-sm); }
 .muted { color: var(--ink-3); font-size: 12.5px; }
 
 @media (max-width: 860px) {

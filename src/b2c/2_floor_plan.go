@@ -333,7 +333,7 @@ func (s *BuildingRegisterSource) Units(ctx context.Context, sigunguCd, bjdongCd,
 // 같은 전용면적이어도 라인(호수 끝 두 자리)마다 구조가 다르므로 (전용면적, 라인)으로 묶는다.
 // 실측(동탄 여울동 964): 538세대가 모두 84.9㎡라 면적만으로는 타입이 1개뿐이었고, 라인은 01~06이었다.
 // 후보는 화장실 위치·거실 구조를 모른다. 사람이 직접 보고 채우거나 같은 구조의 라인을 합친다.
-// 후보 이름은 "84㎡ 01라인"이고, 면적·라인 순으로 정렬한다. 줄이지 않고 전부 돌려준다.
+// 후보 이름은 "84.90㎡ 01라인"이고, 이름과 같은 순서(면적, 라인)로 정렬한다. 줄이지 않고 전부 돌려준다.
 func (c *FloorPlanCatalog) CandidatesFromUnits(complexID string, units []RegisteredUnit) []FloorPlanVariant {
 	type key struct {
 		area float64
@@ -369,7 +369,7 @@ func (c *FloorPlanCatalog) CandidatesFromUnits(complexID string, units []Registe
 		})
 		v := FloorPlanVariant{
 			ComplexID:       complexID,
-			TypeName:        fmt.Sprintf("%d㎡ %s라인", int(k.area), k.line),
+			TypeName:        CandidateTypeName(k.area, k.line),
 			ExclusiveAreaM2: k.area,
 		}
 		for _, u := range g {
@@ -408,4 +408,22 @@ func (s *FloorPlanStore) SaveCandidates(ctx context.Context, candidates []FloorP
 // ParcelComplexID는 필지 코드로 단지 ID를 만든다. 예: "4159711500-0964-0000".
 func ParcelComplexID(sigunguCd, bjdongCd, bun, ji string) string {
 	return sigunguCd + bjdongCd + "-" + bun + "-" + ji
+}
+
+// CandidateTypeName은 자동 후보 이름이다. 정렬 기준인 전용면적을 소수 둘째 자리까지 그대로 보여서,
+// 59.95㎡와 59.98㎡처럼 정수 부분이 같은 타입이 이름 순서와 다르게 보이지 않게 한다.
+func CandidateTypeName(areaM2 float64, line string) string {
+	return fmt.Sprintf("%.2f㎡ %s라인", areaM2, line)
+}
+
+// ResetCandidates는 건축물대장에서 자동으로 만든 후보를 지운다(사람이 등록한 타입은 남긴다).
+// complexID가 비면 전체다. 이름 규칙을 바꿨을 때 다시 만들게 하려는 것이다. 지운 행 수를 돌려준다.
+func (s *FloorPlanStore) ResetCandidates(ctx context.Context, complexID string) (int64, error) {
+	ct, err := s.pool.Exec(ctx, `
+		DELETE FROM b2c_floor_plans
+		WHERE registered_by = $1 AND ($2 = '' OR complex_id = $2)`, BuildingRegisterRegistrant, complexID)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
 }
