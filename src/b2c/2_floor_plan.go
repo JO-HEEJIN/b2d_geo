@@ -1,8 +1,12 @@
 package b2c
 
 import (
+	"context"
 	"fmt"
 	"sort"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // FloorPlanVariant는 한 단지 안의 평면 타입 하나다. 같은 단지, 같은 평형이어도
@@ -147,4 +151,62 @@ func orUnknown(s string) string {
 		return "정보 없음"
 	}
 	return s
+}
+
+// FloorPlanStore는 평면 타입을 b2c_floor_plans에 저장하고 단지별 카탈로그로 읽어 온다.
+type FloorPlanStore struct {
+	pool *pgxpool.Pool
+}
+
+// NewFloorPlanStore는 b2c_floor_plans 테이블을 쓰는 저장소를 만든다.
+func NewFloorPlanStore(pool *pgxpool.Pool) *FloorPlanStore {
+	return &FloorPlanStore{pool: pool}
+}
+
+// Save는 평면 타입을 저장한다. 같은 단지·타입이 있으면 새 내용으로 바꾼다.
+func (s *FloorPlanStore) Save(ctx context.Context, v FloorPlanVariant, registeredBy string) error {
+	if strings.TrimSpace(v.ComplexID) == "" || strings.TrimSpace(v.TypeName) == "" || v.ExclusiveAreaM2 <= 0 || registeredBy == "" {
+		return fmt.Errorf("complex_id, type_name, exclusive_area_m2(>0), registered_by required")
+	}
+	units := v.Units
+	if units == nil {
+		units = []string{}
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO b2c_floor_plans (complex_id, type_name, exclusive_area_m2, rooms, bathrooms, bays,
+		    bathroom_position, living_room, orientation, image_url, units, registered_by)
+		VALUES ($1, $2, $3, NULLIF($4, 0), NULLIF($5, 0), NULLIF($6, 0),
+		    NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), $11, $12)
+		ON CONFLICT (complex_id, type_name) DO UPDATE SET
+		    exclusive_area_m2 = EXCLUDED.exclusive_area_m2, rooms = EXCLUDED.rooms,
+		    bathrooms = EXCLUDED.bathrooms, bays = EXCLUDED.bays,
+		    bathroom_position = EXCLUDED.bathroom_position, living_room = EXCLUDED.living_room,
+		    orientation = EXCLUDED.orientation, image_url = EXCLUDED.image_url,
+		    units = EXCLUDED.units, registered_by = EXCLUDED.registered_by, updated_at = now()`,
+		strings.TrimSpace(v.ComplexID), strings.TrimSpace(v.TypeName), v.ExclusiveAreaM2, v.Rooms, v.Bathrooms, v.Bays,
+		v.BathroomPosition, v.LivingRoom, v.Orientation, v.ImageURL, units, registeredBy)
+	return err
+}
+
+// Catalog는 단지의 모든 평면 타입을 읽어 카탈로그로 돌려준다.
+func (s *FloorPlanStore) Catalog(ctx context.Context, complexID string) (*FloorPlanCatalog, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT complex_id, type_name, exclusive_area_m2, COALESCE(rooms, 0), COALESCE(bathrooms, 0),
+		       COALESCE(bays, 0), COALESCE(bathroom_position, ''), COALESCE(living_room, ''),
+		       COALESCE(orientation, ''), COALESCE(image_url, ''), units
+		FROM b2c_floor_plans WHERE complex_id = $1`, complexID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	c := NewFloorPlanCatalog()
+	for rows.Next() {
+		var v FloorPlanVariant
+		if err := rows.Scan(&v.ComplexID, &v.TypeName, &v.ExclusiveAreaM2, &v.Rooms, &v.Bathrooms, &v.Bays,
+			&v.BathroomPosition, &v.LivingRoom, &v.Orientation, &v.ImageURL, &v.Units); err != nil {
+			return nil, err
+		}
+		c.AddVariant(v)
+	}
+	return c, rows.Err()
 }
