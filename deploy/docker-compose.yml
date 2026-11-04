@@ -102,6 +102,7 @@ services:
     command: ["b2c-listings", "--state", "/state/listings.json"]
     environment:
       B2D_DATABASE_URL: postgres://${POSTGRES_USER:-b2d}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-b2d_geo}?sslmode=disable
+      B2C_COMPLEX_NO: ${B2C_COMPLEX_NO:-}
     volumes:
       - /var/lib/b2c-listings:/state
 

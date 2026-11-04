@@ -454,12 +454,13 @@ func runB2CListings(ctx context.Context, args []string) error {
 		}
 		return nil
 	}
-	pool, err := pgxpool.New(ctx, dbDSN())
-	if err != nil {
-		return err
+	src := &b2c.NaverListingSource{
+		ComplexNo: os.Getenv("B2C_COMPLEX_NO"),
+		TradeType: "A1",
+		PageSize:  100,
 	}
-	defer pool.Close()
-	change, err := b2c.NewRemainingListings(b2c.NewListingStore(pool)).RefreshOnce(ctx, *state)
+	rl := b2c.NewRemainingListings(src)
+	change, err := rl.RefreshOnce(ctx, *state)
 	if err != nil {
 		return err
 	}
