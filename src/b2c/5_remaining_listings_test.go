@@ -121,3 +121,24 @@ func TestSystemdUnits(t *testing.T) {
 		t.Errorf("service = %s", service)
 	}
 }
+
+func TestPageParams(t *testing.T) {
+	cases := []struct {
+		limit, offset string
+		l, o          int
+		ok            bool
+	}{
+		{"", "", 0, 0, true},
+		{"20", "40", 20, 40, true},
+		{"0", "", 0, 0, false},
+		{"201", "", 0, 0, false},
+		{"10", "-1", 0, 0, false},
+		{"x", "", 0, 0, false},
+	}
+	for _, c := range cases {
+		l, o, ok := pageParams(c.limit, c.offset)
+		if l != c.l || o != c.o || ok != c.ok {
+			t.Errorf("pageParams(%q,%q) = %d,%d,%v", c.limit, c.offset, l, o, ok)
+		}
+	}
+}

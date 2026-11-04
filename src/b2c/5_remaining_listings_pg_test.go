@@ -62,4 +62,39 @@ func TestListingStoreAgainstPostgres(t *testing.T) {
 	if len(ch.Added) != 0 || len(ch.Gone) != 1 || ch.Gone[0].ID != id1 {
 		t.Fatalf("second refresh = %+v", ch)
 	}
+
+	// 페이지네이션: 같은 단지에 매물 5건을 더 넣고 2건씩 끝까지 넘긴다.
+	for i := 0; i < 5; i++ {
+		if _, err := store.Register(ctx, Listing{ComplexName: "b2c_test_page", AskingManwon: 50000 + i}, "b2c_test_agent"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var prices []int
+	offset, pages := 0, 0
+	for {
+		page, err := store.Page(ctx, "b2c_test_page", 2, offset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if page.Total != 5 || page.Limit != 2 {
+			t.Fatalf("page = %+v", page)
+		}
+		for _, l := range page.Listings {
+			prices = append(prices, l.AskingManwon)
+		}
+		if page.NextOffset == nil {
+			break
+		}
+		offset = *page.NextOffset
+	}
+	if pages != 3 || len(prices) != 5 || prices[0] != 50000 || prices[4] != 50004 {
+		t.Fatalf("pages=%d prices=%v", pages, prices)
+	}
+	if p, err := store.Page(ctx, "b2c_test_page", 1000, -3); err != nil || p.Limit != 200 || p.Offset != 0 {
+		t.Fatalf("clamp = %+v %v", p, err)
+	}
+	if p, err := store.Page(ctx, "nothing_here", 0, 0); err != nil || p.Listings == nil || p.NextOffset != nil || p.Limit != 50 {
+		t.Fatalf("empty = %+v %v", p, err)
+	}
 }

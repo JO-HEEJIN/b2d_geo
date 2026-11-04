@@ -339,15 +339,71 @@ func (s *ListingStore) Fetch(ctx context.Context) ([]Listing, error) {
 	return scanListings(rows)
 }
 
-// Sold는 since 이후 팔린 직접 등록 매물이다. complexName이 비지 않으면 그 단지만.
-// LastSeen은 팔림으로 바뀐 시각이다.
+// ListingPage는 남은 매물 목록의 한 페이지다. 전부를 보여주되 한 번에 내려보내는 양만 나눈다.
+type ListingPage struct {
+	Listings   []Listing `json:"listings"`
+	Total      int       `json:"total"`
+	Limit      int       `json:"limit"`
+	Offset     int       `json:"offset"`
+	NextOffset *int      `json:"next_offset"` // 마지막 페이지면 null
+}
+
+const (
+	listingPageDefault = 50
+	listingPageMax     = 200
+)
+
+// Page는 active 직접 등록 매물을 단지, 호가, ID 순으로 limit개씩 돌려준다.
+// limit이 0 이하면 50, 200을 넘으면 200으로 맞춘다. 정렬이 고정이라 offset이 안정적이다.
+func (s *ListingStore) Page(ctx context.Context, complexName string, limit, offset int) (ListingPage, error) {
+	if limit <= 0 {
+		limit = listingPageDefault
+	}
+	if limit > listingPageMax {
+		limit = listingPageMax
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	page := ListingPage{Listings: []Listing{}, Limit: limit, Offset: offset}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM b2c_listings
+		WHERE status = 'active' AND ($1 = '' OR complex_name = $1)`, complexName).Scan(&page.Total); err != nil {
+		return ListingPage{}, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
+		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
+		FROM b2c_listings
+		WHERE status = 'active' AND ($1 = '' OR complex_name = $1)
+		ORDER BY complex_name, asking_manwon, id
+		LIMIT $2 OFFSET $3`, complexName, limit, offset)
+	if err != nil {
+		return ListingPage{}, err
+	}
+	list, err := scanListings(rows)
+	if err != nil {
+		return ListingPage{}, err
+	}
+	if list != nil {
+		page.Listings = list
+	}
+	if next := offset + len(list); next < page.Total {
+		page.NextOffset = &next
+	}
+	return page, nil
+}
+
+// Sold는 since 이후 팔린 직접 등록 매물을 최근 순으로 최대 50건 돌려준다.
+// complexName이 비지 않으면 그 단지만. LastSeen은 팔림으로 바뀐 시각이다.
 func (s *ListingStore) Sold(ctx context.Context, complexName string, since time.Time) ([]Listing, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
 		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at
 		FROM b2c_listings
 		WHERE status = 'sold' AND updated_at >= $1 AND ($2 = '' OR complex_name = $2)
-		ORDER BY updated_at DESC`, since, complexName)
+		ORDER BY updated_at DESC
+		LIMIT $3`, since, complexName, listingPageDefault)
 	if err != nil {
 		return nil, err
 	}

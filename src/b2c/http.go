@@ -159,29 +159,48 @@ func (h *Handler) floorPlans(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"complex_id": id, "variants": variants, "tour": tour, "checklists": checklists})
 }
 
-// remainingListings: ?complex=  남은 매물 전부와 최근 7일 팔린 매물.
+// remainingListings: ?complex=&limit=&offset=  남은 매물(페이지)과 최근 7일 팔린 매물.
 func (h *Handler) remainingListings(w http.ResponseWriter, r *http.Request) {
-	complexName := r.URL.Query().Get("complex")
-	all, err := h.listings.Fetch(r.Context())
+	q := r.URL.Query()
+	complexName := q.Get("complex")
+	limit, offset, ok := pageParams(q.Get("limit"), q.Get("offset"))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "limit(1-200) and offset(>=0) must be integers")
+		return
+	}
+	page, err := h.listings.Page(r.Context(), complexName, limit, offset)
 	if err != nil {
 		log.Printf("b2c listings: %v", err)
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	remaining := []Listing{}
-	for _, l := range all {
-		if complexName == "" || l.ComplexName == complexName {
-			remaining = append(remaining, l)
-		}
-	}
-	sortListings(remaining)
 	sold, err := h.listings.Sold(r.Context(), complexName, time.Now().Add(-goneKeep))
 	if err != nil {
 		log.Printf("b2c listings sold: %v", err)
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"complex": complexName, "remaining": remaining, "recently_sold": sold})
+	if sold == nil {
+		sold = []Listing{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"complex": complexName, "remaining": page, "recently_sold": sold})
+}
+
+// pageParams는 limit, offset 쿼리를 읽는다. 비어 있으면 0(기본값 적용)이다.
+func pageParams(limitStr, offsetStr string) (int, int, bool) {
+	limit, offset := 0, 0
+	var err error
+	if limitStr != "" {
+		if limit, err = strconv.Atoi(limitStr); err != nil || limit < 1 || limit > listingPageMax {
+			return 0, 0, false
+		}
+	}
+	if offsetStr != "" {
+		if offset, err = strconv.Atoi(offsetStr); err != nil || offset < 0 {
+			return 0, 0, false
+		}
+	}
+	return limit, offset, true
 }
 
 func (h *Handler) saveFloorPlan(w http.ResponseWriter, r *http.Request) {
