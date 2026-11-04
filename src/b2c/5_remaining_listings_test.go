@@ -194,8 +194,10 @@ func TestParseListingsCSVEncodingAndHeader(t *testing.T) {
 
 func TestDailyCap(t *testing.T) {
 	c := &dailyCap{max: 2}
-	if !c.take() || !c.take() || c.take() {
-		t.Fatal("cap not enforced")
+	for i, want := range []bool{true, true, false} {
+		if got := c.take(); got != want {
+			t.Fatalf("take %d = %v, want %v", i+1, got, want)
+		}
 	}
 	c.day = "2000-01-01" // 날짜가 바뀌면 다시 센다
 	if !c.take() {
