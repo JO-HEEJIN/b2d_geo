@@ -1,0 +1,14 @@
+[Unit]
+Description=Collect current market listings from supplier %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=65532
+Group=65532
+EnvironmentFile=/etc/b2d_geo/database.env
+EnvironmentFile=/etc/b2d_geo/market/%i.env
+Environment="B2C_LISTING_SOURCE=market"
+ExecStart=/opt/b2d_geo/current/b2d-etl b2c-listings
+TimeoutStartSec=180

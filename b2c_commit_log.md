@@ -779,3 +779,6 @@ Refs #18
 - PostGIS test added (local Docker is off): another registrant's listing is excluded, and ordering is active first, then sold.
 
 
+## 2026-11-05 — feat(b2c): collect supplier snapshots and track market listing changes
+
+Module 5 now accepts complete current listing snapshots from an actual supplier, isolates source/complex scope, records snapshot digests and added/relisted/price_changed/sold/withdrawn/missing history, and exposes availability and unknown counts to the UI. The existing b2c-listings command has market mode; native systemd templates are separate from direct registration. Failed, partial, duplicate, replayed and out-of-order inputs cannot clear inventory or duplicate changes. Missing is never inferred sold. No current supplier is connected: this implements collection/tracking, not proof of acquired market data. Production does not receive test listings. Provider integration contract and connection checklist: docs/market-feed-v1.md.
