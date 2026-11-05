@@ -268,7 +268,7 @@ function listingRows(items) {
     .filter((l) => l.source !== "sample")
     .map(
       (l) =>
-        `<tr><td><small class="muted">${l.source === "naver" ? "네이버" : "직접 등록"}</small> ${esc(l.type_name || "")}</td><td>${l.floor ? l.floor + "층" : ""}</td><td class="r">${formatManwon(l.asking_manwon)}</td></tr>`
+        `<tr><td><small class="muted">${l.source?.startsWith("market/") ? "제휴 공급 매물" : l.source === "naver" ? "네이버" : "직접 등록"}</small> ${esc(l.type_name || "")}</td><td>${l.floor ? l.floor + "층" : ""}</td><td class="r">${formatManwon(l.asking_manwon)}</td></tr>`
     )
     .join("");
 }
@@ -281,7 +281,7 @@ function naverSyncNotice(statuses) {
   return `네이버 실제 매물 · 최근 수집 ${when} · 1분마다 변동을 확인합니다.`;
 }
 
-function renderListings(name, page, statuses, changes = []) {
+function renderListings(name, page, statuses, changes = [], market) {
   const version = ++listingViewVersion;
   const box = document.getElementById("listings");
   if (!box) return;
@@ -291,10 +291,10 @@ function renderListings(name, page, statuses, changes = []) {
   changes.forEach((c) => { if (Object.hasOwn(counts, c.kind)) counts[c.kind]++; });
   box.innerHTML =
     `<p class="muted live-status" role="status"></p>` +
-    `<p class="muted naver-status">${esc(naverSyncNotice(statuses))}</p>` +
+    renderMarketCoverage(market) +
+    (statuses?.length ? `<p class="muted naver-status">${esc(naverSyncNotice(statuses))}</p>` : "") +
     (changes.length ? `<p class="muted">최근 변동(최대 100건): 신규 ${counts.added} · 사라짐 ${counts.gone} · 호가 변경 ${counts.price_changed}. 목록에서 사라진 매물은 거래 완료가 확인된 것은 아닙니다.</p>` : "") +
-    `<p class="muted" style="margin:0 0 6px">확인된 실제 매물 ${total}건</p>` +
-    (total ? `<table class="mini" id="listingTable">${listingRows(page.listings)}</table>` : `<p class="muted">아직 등록된 판매 중 매물이 없습니다.</p>`);
+    (total ? `<p class="muted" style="margin:0 0 6px">서비스에서 확인 가능한 판매 중 게시매물 ${total}건</p><table class="mini" id="listingTable">${listingRows(page.listings)}</table>` : "");
   let next = page?.next_offset;
   const addMore = () => {
     if (next == null) return;
@@ -321,12 +321,29 @@ function renderListings(name, page, statuses, changes = []) {
   if (!listingLiveView || listingLiveView.box !== box || listingLiveView.name !== name || listingLiveView.closed) {
     listingLiveView?.stop();
     listingLiveView = new ListingLiveView(name, box, (data) => {
-      renderListings(name, data.remaining, data.naver_sync || [], data.naver_changes || []);
+      renderListings(name, data.remaining, data.naver_sync || [], data.naver_changes || [], data.market);
       renderRecentlySold(data.recently_sold || []);
     });
   }
   listingLiveView.showStatus();
   if (statuses === undefined) listingLiveView.refresh();
+}
+
+function renderMarketCoverage(market) {
+  if (!market) return `<p class="muted">시장 매물 연결 상태를 확인하고 있습니다.</p>`;
+  if (market.status === "not_connected") return `<p class="muted">시장 매물 공급원이 아직 연결되지 않았습니다. 현재 남은 매물 수는 확인할 수 없습니다.</p>`;
+  const sources = market.sources || [];
+  const names = sources.map((s) => esc(s.name)).join(", ");
+  const times = sources.map((s) => s.observed_at).filter(Boolean).sort((a, b) => Date.parse(a) - Date.parse(b));
+  const asOf = times.length ? new Date(times[0]).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "확인 전";
+  const state = market.status === "ready" ? "수집 정상" : market.status === "partial" ? "일부 공급원 확인 불가" : market.status === "stale" ? "수집 지연 · 마지막 확인 목록" : "공급원 응답 확인 불가";
+  let html = `<p class="muted">${names} · ${state} · 기준 ${esc(asOf)}</p>`;
+  if (market.listing_count !== null && market.listing_count !== undefined) html += `<p>공급원에서 확인한 판매 중 게시매물 <strong>${market.listing_count}건</strong> <small>연결한 공급 범위 기준, 전체 시장 또는 중복 제거한 주택 수가 아닙니다.</small></p>`;
+  else html += `<p class="muted">남은 매물 수를 확정할 수 없습니다.</p>`;
+  const kinds = { added: "신규", relisted: "재등장", price_changed: "호가 변경", sold: "판매 완료", withdrawn: "매물 내림", missing: "목록에서 사라짐(판매 확인 안 됨)" };
+  const events = market.changes || [];
+  if (events.length) html += `<p class="muted">최근 변동(최대 100건)</p><table class="mini">${events.map((c) => `<tr><td>${esc(kinds[c.kind] || c.kind)}</td><td>${esc(c.external_id)}</td><td class="r">${c.previous_manwon ? formatManwon(c.previous_manwon) : ""}${c.previous_manwon && c.current_manwon ? " → " : ""}${c.current_manwon ? formatManwon(c.current_manwon) : ""}</td></tr>`).join("")}</table>`;
+  return html;
 }
 
 function renderRecentlySold(listings) {

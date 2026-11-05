@@ -1,0 +1,11 @@
+[Unit]
+Description=Check supplier %i for market listing changes
+
+[Timer]
+OnCalendar=*:*:00
+AccuracySec=1s
+Persistent=true
+Unit=b2c-market@%i.service
+
+[Install]
+WantedBy=timers.target

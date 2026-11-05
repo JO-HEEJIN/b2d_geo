@@ -168,6 +168,11 @@ $RUN rone-sync                                       # 백필: 2005-01부터 이
 
 ## 6-4. B2C 실제 매물 갱신: 네이티브 ETL과 독립된 원천
 
+시장 매물 수집·추적은 [외부 공급 피드 규격](../docs/market-feed-v1.md)의 market 모드를 사용한다.
+실제 공급원은 현재 미연결이며 market.listing_count=null을 0으로 해석하지 않는다.
+deploy/systemd/b2c-market@.service/.timer는 실제 공급원 수집 검증 전에는 활성화하지 않는다.
+네이버 타이머는 비활성 상태로 유지한다.
+
 `b2d-etl b2c-listings`의 기본 원천은 직접 등록 DB다. `B2C_LISTING_SOURCE=naver`를 명시한
 별도 실행만 네이버를 조회한다. 두 원천은 서로 다른 상태 파일을 사용하며 다른 원천의 상태 파일을
 읽으려 하면 실패한다. 직접 등록·CSV 등록·판매 처리를 네이버 오류 때문에 중지하지 않는다.
