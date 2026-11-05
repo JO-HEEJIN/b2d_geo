@@ -462,6 +462,9 @@ func runB2CListings(ctx context.Context, args []string) error {
 	if mode == "" {
 		mode = "direct"
 	}
+	if mode == "market" {
+		return runB2CMarket(ctx)
+	}
 	var src b2c.ListingSource
 	switch mode {
 	case "direct":
@@ -490,7 +493,7 @@ func runB2CListings(ctx context.Context, args []string) error {
 		}
 		src = naver
 	default:
-		return fmt.Errorf("B2C_LISTING_SOURCE must be direct or naver")
+		return fmt.Errorf("B2C_LISTING_SOURCE must be direct, market or naver")
 	}
 	if err := validateB2CListingStateSource(*state, mode); err != nil {
 		return err

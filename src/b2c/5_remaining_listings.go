@@ -410,7 +410,7 @@ func (s *ListingStore) Sold(ctx context.Context, complexName string, since time.
 		SELECT id, complex_name, COALESCE(type_name, ''), asking_manwon, COALESCE(floor, 0),
 		       COALESCE(lon, 0), COALESCE(lat, 0), created_at, updated_at, registered_by, external_source
 		FROM b2c_listings
-		WHERE status = 'sold' AND external_source IS NULL AND registered_by NOT LIKE 'sample:%'
+		WHERE status = 'sold' AND (external_source IS NULL OR external_source LIKE 'market/%') AND registered_by NOT LIKE 'sample:%'
 		AND updated_at >= $1 AND ($2 = '' OR complex_name = $2)
 		ORDER BY updated_at DESC
 		LIMIT $3`, since, complexName, listingPageDefault)

@@ -222,7 +222,13 @@ func (h *Handler) remainingListings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"complex": complexName, "remaining": page, "recently_sold": sold, "naver_sync": statuses, "naver_changes": changes})
+	market, err := h.listings.MarketCoverage(r.Context(), complexName)
+	if err != nil {
+		log.Printf("b2c market coverage: %v", err)
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"complex": complexName, "remaining": page, "recently_sold": sold, "market": market, "naver_sync": statuses, "naver_changes": changes})
 }
 
 // pageParams는 limit, offset 쿼리를 읽는다. 비어 있으면 0(기본값 적용)이다.
